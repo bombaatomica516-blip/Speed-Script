@@ -1,0 +1,905 @@
+--[[
+    SPEED HUB - GUI Glassmorphism
+    ------------------------------------------------------
+    Recursos:
+    - GUI com efeito de vidro (blur) e cantos arredondados
+    - Minimizar (-) e Fechar (X) com animações
+    - Tecla Q reabre a GUI com animação do centro pra fora
+    - Slider moderno de velocidade (Speed)
+    - Relógio local do dispositivo no canto inferior direito
+    - Menu lateral (3 traços) com Fly / Noclip / Esp / Configurações
+    - Aba de Configurações (Auto Save) e Temas
+    ------------------------------------------------------
+    Coloque este script em StarterPlayerScripts (como LocalScript)
+    ou execute via executor.
+]]
+
+------------------------------------------------------------
+-- SERVIÇOS
+------------------------------------------------------------
+local Players            = game:GetService("Players")
+local TweenService        = game:GetService("TweenService")
+local UserInputService    = game:GetService("UserInputService")
+local Lighting            = game:GetService("Lighting")
+local RunService          = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui    = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Remove instância anterior (evita duplicar ao re-executar)
+local old = PlayerGui:FindFirstChild("SpeedHub")
+if old then old:Destroy() end
+local oldBlur = Lighting:FindFirstChild("SpeedHubBlur")
+if oldBlur then oldBlur:Destroy() end
+
+------------------------------------------------------------
+-- CONFIGURAÇÃO / TEMAS
+------------------------------------------------------------
+local Themes = {
+    Dark   = {Main = Color3.fromRGB(22, 22, 26),  Accent = Color3.fromRGB(88, 121, 255), Text = Color3.fromRGB(235,235,240)},
+    Purple = {Main = Color3.fromRGB(26, 20, 32),  Accent = Color3.fromRGB(168, 85, 247), Text = Color3.fromRGB(240,235,245)},
+    Blue   = {Main = Color3.fromRGB(16, 24, 34),  Accent = Color3.fromRGB(56, 189, 248), Text = Color3.fromRGB(230,240,245)},
+    Green  = {Main = Color3.fromRGB(18, 26, 22),  Accent = Color3.fromRGB(74, 222, 128), Text = Color3.fromRGB(230,245,235)},
+}
+
+local State = {
+    CurrentTheme   = "Dark",
+    AutoSave       = true,
+    Speed          = 16,
+    MinSpeed       = 16,
+    MaxSpeed       = 300,
+    FlyEnabled     = false,
+    NoclipEnabled  = false,
+    EspEnabled     = false,
+    IsClosed       = false,
+    IsMinimized    = false,
+    CurrentPage    = "Speed",
+}
+
+------------------------------------------------------------
+-- HELPERS
+------------------------------------------------------------
+local function tween(obj, props, time, style, dir)
+    local info = TweenInfo.new(time or 0.25, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out)
+    local t = TweenService:Create(obj, info, props)
+    t:Play()
+    return t
+end
+
+local function round(obj, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius)
+    c.Parent = obj
+    return c
+end
+
+local function circle(obj)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(1, 0)
+    c.Parent = obj
+    return c
+end
+
+local function glass(frame, transparency)
+    frame.BackgroundTransparency = transparency or 0.35
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255,255,255)
+    stroke.Transparency = 0.75
+    stroke.Thickness = 1.2
+    stroke.Parent = frame
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(180,180,200)),
+    })
+    grad.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.85),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    grad.Rotation = 90
+    grad.Parent = frame
+    return stroke
+end
+
+local function newLabel(parent, text, size, position, textSize, bold, alignX)
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Size = size
+    lbl.Position = position
+    lbl.Text = text
+    lbl.TextColor3 = Themes[State.CurrentTheme].Text
+    lbl.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
+    lbl.TextSize = textSize or 14
+    lbl.TextXAlignment = alignX or Enum.TextXAlignment.Left
+    lbl.Parent = parent
+    return lbl
+end
+
+------------------------------------------------------------
+-- BLUR (efeito de vidro por trás da GUI)
+------------------------------------------------------------
+local Blur = Instance.new("BlurEffect")
+Blur.Name = "SpeedHubBlur"
+Blur.Size = 0
+Blur.Parent = Lighting
+
+------------------------------------------------------------
+-- SCREEN GUI + MAIN FRAME
+------------------------------------------------------------
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SpeedHub"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.DisplayOrder = 50
+ScreenGui.Parent = PlayerGui
+
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.AnchorPoint = Vector2.new(0.5, 0.5)
+Main.Position = UDim2.new(0.5, 0, 0.5, 0)
+Main.Size = UDim2.new(0, 300, 0, 230)
+Main.BackgroundColor3 = Themes[State.CurrentTheme].Main
+Main.BorderSizePixel = 0
+Main.ClipsDescendants = true
+Main.Parent = ScreenGui
+round(Main, 18)
+local mainStroke = glass(Main, 0.35)
+
+------------------------------------------------------------
+-- TOP BAR
+------------------------------------------------------------
+local TopBar = Instance.new("Frame")
+TopBar.Name = "TopBar"
+TopBar.Size = UDim2.new(1, 0, 0, 40)
+TopBar.BackgroundTransparency = 1
+TopBar.Parent = Main
+
+-- Botão hambúrguer (3 traços)
+local HamburgerBtn = Instance.new("TextButton")
+HamburgerBtn.Name = "HamburgerBtn"
+HamburgerBtn.Size = UDim2.new(0, 30, 0, 30)
+HamburgerBtn.Position = UDim2.new(0, 8, 0, 5)
+HamburgerBtn.BackgroundTransparency = 1
+HamburgerBtn.Text = ""
+HamburgerBtn.Parent = TopBar
+
+for i = 1, 3 do
+    local line = Instance.new("Frame")
+    line.Name = "Line"..i
+    line.Size = UDim2.new(0, 18, 0, 2)
+    line.Position = UDim2.new(0.5, -9, 0, 8 + (i-1)*7)
+    line.BackgroundColor3 = Themes[State.CurrentTheme].Text
+    line.BorderSizePixel = 0
+    round(line, 2)
+    line.Parent = HamburgerBtn
+end
+
+-- Botão minimizar ( - )
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Name = "MinimizeBtn"
+MinimizeBtn.Size = UDim2.new(0, 26, 0, 26)
+MinimizeBtn.Position = UDim2.new(1, -66, 0, 7)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(255,255,255)
+MinimizeBtn.BackgroundTransparency = 0.9
+MinimizeBtn.Text = "-"
+MinimizeBtn.TextColor3 = Themes[State.CurrentTheme].Text
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 18
+MinimizeBtn.Parent = TopBar
+round(MinimizeBtn, 8)
+
+-- Botão fechar ( X )
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Name = "CloseBtn"
+CloseBtn.Size = UDim2.new(0, 26, 0, 26)
+CloseBtn.Position = UDim2.new(1, -34, 0, 7)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(255,80,80)
+CloseBtn.BackgroundTransparency = 0.85
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Themes[State.CurrentTheme].Text
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 15
+CloseBtn.Parent = TopBar
+round(CloseBtn, 8)
+
+------------------------------------------------------------
+-- CONTAINER DE PÁGINAS
+------------------------------------------------------------
+local Content = Instance.new("Frame")
+Content.Name = "Content"
+Content.Size = UDim2.new(1, 0, 1, -40)
+Content.Position = UDim2.new(0, 0, 0, 40)
+Content.BackgroundTransparency = 1
+Content.Parent = Main
+
+local Pages = {}
+
+local function newPage(name, visible)
+    local p = Instance.new("Frame")
+    p.Name = name
+    p.Size = UDim2.new(1, 0, 1, 0)
+    p.BackgroundTransparency = 1
+    p.Visible = visible or false
+    p.Parent = Content
+    Pages[name] = p
+    return p
+end
+
+local function backArrow(parent, callback)
+    local btn = Instance.new("TextButton")
+    btn.Name = "BackBtn"
+    btn.Size = UDim2.new(0, 26, 0, 26)
+    btn.Position = UDim2.new(0, 10, 0, 6)
+    btn.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    btn.BackgroundTransparency = 0.9
+    btn.Text = "<"
+    btn.TextColor3 = Themes[State.CurrentTheme].Text
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 16
+    btn.Parent = parent
+    round(btn, 8)
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+------------------------------------------------------------
+-- PÁGINA: SPEED (padrão)
+------------------------------------------------------------
+local SpeedPage = newPage("Speed", true)
+
+-- Track do slider
+local SliderTrack = Instance.new("Frame")
+SliderTrack.Name = "SliderTrack"
+SliderTrack.Size = UDim2.new(1, -40, 0, 8)
+SliderTrack.Position = UDim2.new(0, 20, 0, 25)
+SliderTrack.BackgroundColor3 = Color3.fromRGB(255,255,255)
+SliderTrack.BackgroundTransparency = 0.85
+SliderTrack.BorderSizePixel = 0
+SliderTrack.Parent = SpeedPage
+round(SliderTrack, 4)
+
+local SliderFill = Instance.new("Frame")
+SliderFill.Name = "SliderFill"
+SliderFill.Size = UDim2.new(0, 0, 1, 0)
+SliderFill.BackgroundColor3 = Themes[State.CurrentTheme].Accent
+SliderFill.BorderSizePixel = 0
+SliderFill.Parent = SliderTrack
+round(SliderFill, 4)
+
+local SliderKnob = Instance.new("Frame")
+SliderKnob.Name = "SliderKnob"
+SliderKnob.Size = UDim2.new(0, 18, 0, 18)
+SliderKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+SliderKnob.Position = UDim2.new(0, 0, 0.5, 0)
+SliderKnob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+SliderKnob.BorderSizePixel = 0
+SliderKnob.ZIndex = 2
+SliderKnob.Parent = SliderTrack
+circle(SliderKnob)
+local knobStroke = Instance.new("UIStroke")
+knobStroke.Color = Themes[State.CurrentTheme].Accent
+knobStroke.Thickness = 2
+knobStroke.Parent = SliderKnob
+
+-- Título "Speed :  valor" abaixo do slider
+local SpeedTitle = newLabel(SpeedPage, "Speed", UDim2.new(0, 100, 0, 20), UDim2.new(0, 20, 0, 48), 16, true)
+local SpeedColon = newLabel(SpeedPage, ":", UDim2.new(0, 20, 0, 20), UDim2.new(0, 70, 0, 48), 16, true)
+local SpeedValue = newLabel(SpeedPage, tostring(State.Speed), UDim2.new(0, 60, 0, 20), UDim2.new(0, 90, 0, 48), 16, false)
+
+-- Relógio (canto inferior direito)
+local ClockLabel = newLabel(SpeedPage, "--:--", UDim2.new(0, 80, 0, 16), UDim2.new(1, -90, 1, -26), 12, false, Enum.TextXAlignment.Right)
+ClockLabel.TextTransparency = 0.35
+
+local function updateSpeedValueLabel(v)
+    SpeedValue.Text = tostring(math.floor(v))
+end
+
+local function applySpeed(v)
+    State.Speed = v
+    updateSpeedValueLabel(v)
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.WalkSpeed = v
+    end
+end
+
+local function setSliderFromValue(v)
+    local alpha = (v - State.MinSpeed) / (State.MaxSpeed - State.MinSpeed)
+    alpha = math.clamp(alpha, 0, 1)
+    tween(SliderFill, {Size = UDim2.new(alpha, 0, 1, 0)}, 0.05, Enum.EasingStyle.Linear)
+    tween(SliderKnob, {Position = UDim2.new(alpha, 0, 0.5, 0)}, 0.05, Enum.EasingStyle.Linear)
+end
+
+-- Arrastar o slider
+local draggingSlider = false
+
+local function updateSliderFromInputPosX(x)
+    local trackPos = SliderTrack.AbsolutePosition.X
+    local trackSize = SliderTrack.AbsoluteSize.X
+    local alpha = math.clamp((x - trackPos) / trackSize, 0, 1)
+    local value = State.MinSpeed + (State.MaxSpeed - State.MinSpeed) * alpha
+    SliderFill.Size = UDim2.new(alpha, 0, 1, 0)
+    SliderKnob.Position = UDim2.new(alpha, 0, 0.5, 0)
+    applySpeed(value)
+end
+
+SliderKnob.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingSlider = true
+    end
+end)
+
+SliderTrack.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingSlider = true
+        updateSliderFromInputPosX(input.Position.X)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateSliderFromInputPosX(input.Position.X)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingSlider = false
+    end
+end)
+
+setSliderFromValue(State.Speed)
+
+-- Relógio local do dispositivo
+task.spawn(function()
+    while ScreenGui.Parent do
+        local ok, dt = pcall(function()
+            return DateTime.now():ToLocalTime()
+        end)
+        if ok then
+            ClockLabel.Text = string.format("%02d:%02d", dt.Hour, dt.Minute)
+        end
+        task.wait(1)
+    end
+end)
+
+------------------------------------------------------------
+-- PÁGINA: MENU (aberta pelo hambúrguer)
+------------------------------------------------------------
+local MenuPage = newPage("Menu", false)
+
+local function menuButton(text, yPos, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -40, 0, 34)
+    btn.Position = UDim2.new(0, 20, 0, yPos)
+    btn.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    btn.BackgroundTransparency = 0.9
+    btn.Text = text
+    btn.TextColor3 = Themes[State.CurrentTheme].Text
+    btn.Font = Enum.Font.GothamMedium
+    btn.TextSize = 15
+    btn.Parent = MenuPage
+    round(btn, 10)
+    btn.MouseButton1Click:Connect(callback)
+    btn.MouseEnter:Connect(function() tween(btn, {BackgroundTransparency = 0.75}, 0.15) end)
+    btn.MouseLeave:Connect(function() tween(btn, {BackgroundTransparency = 0.9}, 0.15) end)
+    return btn
+end
+
+------------------------------------------------------------
+-- PÁGINA: SETTINGS (Configurações globais)
+------------------------------------------------------------
+local SettingsPage = newPage("Settings", false)
+newLabel(SettingsPage, "Configurações", UDim2.new(0, 160, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+
+newLabel(SettingsPage, "Auto Save", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+
+------------------------------------------------------------
+-- PÁGINA: THEMES (Temas)
+------------------------------------------------------------
+local ThemesPage = newPage("Themes", false)
+newLabel(ThemesPage, "Temas", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+
+local themeOrder = {"Dark", "Purple", "Blue", "Green"}
+local function applyTheme(name)
+    State.CurrentTheme = name
+    local t = Themes[name]
+    tween(Main, {BackgroundColor3 = t.Main}, 0.3)
+    tween(SliderFill, {BackgroundColor3 = t.Accent}, 0.3)
+    tween(knobStroke, {Color = t.Accent}, 0.3)
+    for _, obj in ipairs(ScreenGui:GetDescendants()) do
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+            if obj.Name ~= "CloseBtn" then
+                tween(obj, {TextColor3 = t.Text}, 0.3)
+            end
+        end
+        if obj.Name:match("^Line%d") then
+            tween(obj, {BackgroundColor3 = t.Text}, 0.3)
+        end
+    end
+end
+
+for i, themeName in ipairs(themeOrder) do
+    local swatch = Instance.new("TextButton")
+    swatch.Size = UDim2.new(0, 60, 0, 60)
+    swatch.Position = UDim2.new(0, 20 + (i-1)*66, 0, 50)
+    swatch.BackgroundColor3 = Themes[themeName].Accent
+    swatch.Text = themeName
+    swatch.TextColor3 = Color3.fromRGB(255,255,255)
+    swatch.TextSize = 11
+    swatch.Font = Enum.Font.GothamBold
+    swatch.TextYAlignment = Enum.TextYAlignment.Bottom
+    swatch.Parent = ThemesPage
+    round(swatch, 12)
+    swatch.MouseButton1Click:Connect(function()
+        applyTheme(themeName)
+    end)
+end
+
+------------------------------------------------------------
+-- PÁGINA: FLY
+------------------------------------------------------------
+local FlyPage = newPage("Fly", false)
+newLabel(FlyPage, "Fly", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+newLabel(FlyPage, "Ativar voo", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+
+local flyBodyVelocity, flyBodyGyro
+local flyConnection
+
+local function stopFly()
+    if flyConnection then flyConnection:Disconnect(); flyConnection = nil end
+    if flyBodyVelocity then flyBodyVelocity:Destroy(); flyBodyVelocity = nil end
+    if flyBodyGyro then flyBodyGyro:Destroy(); flyBodyGyro = nil end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.PlatformStand = false end
+end
+
+local function startFly()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+
+    hum.PlatformStand = true
+
+    flyBodyVelocity = Instance.new("BodyVelocity")
+    flyBodyVelocity.MaxForce = Vector3.new(1,1,1) * math.huge
+    flyBodyVelocity.Velocity = Vector3.new(0,0,0)
+    flyBodyVelocity.Parent = root
+
+    flyBodyGyro = Instance.new("BodyGyro")
+    flyBodyGyro.MaxTorque = Vector3.new(1,1,1) * math.huge
+    flyBodyGyro.P = 3000
+    flyBodyGyro.Parent = root
+
+    flyConnection = RunService.RenderStepped:Connect(function()
+        if not State.FlyEnabled then return end
+        local camera = workspace.CurrentCamera
+        local moveDir = Vector3.new()
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir += camera.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir -= camera.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir -= camera.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir += camera.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir += Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir += Vector3.new(0,-1,0) end
+
+        if moveDir.Magnitude > 0 then
+            moveDir = moveDir.Unit
+        end
+        flyBodyVelocity.Velocity = moveDir * State.Speed * 3
+        flyBodyGyro.CFrame = camera.CFrame
+    end)
+end
+
+local FlyTrack; local FlyToggleObj
+do
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(0, 44, 0, 22)
+    track.Position = UDim2.new(1, -64, 0, 57)
+    track.BackgroundColor3 = Color3.fromRGB(70,70,75)
+    track.BorderSizePixel = 0
+    track.Parent = FlyPage
+    round(track, 11)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = UDim2.new(0, 2, 0.5, -9)
+    knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    knob.Parent = track
+    circle(knob)
+    local btn = Instance.new("TextButton")
+    btn.BackgroundTransparency = 1
+    btn.Size = UDim2.new(1,0,1,0)
+    btn.Text = ""
+    btn.Parent = track
+    btn.MouseButton1Click:Connect(function()
+        State.FlyEnabled = not State.FlyEnabled
+        tween(knob, {Position = State.FlyEnabled and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}, 0.2)
+        tween(track, {BackgroundColor3 = State.FlyEnabled and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)}, 0.2)
+        if State.FlyEnabled then startFly() else stopFly() end
+    end)
+end
+
+------------------------------------------------------------
+-- PÁGINA: NOCLIP
+------------------------------------------------------------
+local NoclipPage = newPage("Noclip", false)
+newLabel(NoclipPage, "Noclip", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+newLabel(NoclipPage, "Ativar noclip", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+
+local noclipConnection
+local function stopNoclip()
+    if noclipConnection then noclipConnection:Disconnect(); noclipConnection = nil end
+end
+local function startNoclip()
+    noclipConnection = RunService.Stepped:Connect(function()
+        if not State.NoclipEnabled then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end)
+end
+
+do
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(0, 44, 0, 22)
+    track.Position = UDim2.new(1, -64, 0, 57)
+    track.BackgroundColor3 = Color3.fromRGB(70,70,75)
+    track.BorderSizePixel = 0
+    track.Parent = NoclipPage
+    round(track, 11)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = UDim2.new(0, 2, 0.5, -9)
+    knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    knob.Parent = track
+    circle(knob)
+    local btn = Instance.new("TextButton")
+    btn.BackgroundTransparency = 1
+    btn.Size = UDim2.new(1,0,1,0)
+    btn.Text = ""
+    btn.Parent = track
+    btn.MouseButton1Click:Connect(function()
+        State.NoclipEnabled = not State.NoclipEnabled
+        tween(knob, {Position = State.NoclipEnabled and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}, 0.2)
+        tween(track, {BackgroundColor3 = State.NoclipEnabled and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)}, 0.2)
+        if State.NoclipEnabled then startNoclip() else stopNoclip() end
+    end)
+end
+
+------------------------------------------------------------
+-- PÁGINA: ESP (ferramenta de moderação / anti-cheat visual)
+------------------------------------------------------------
+-- Mostra Nome, Distância, Vida e Velocidade real de cada jogador.
+-- Quando a velocidade observada estiver muito acima do normal,
+-- o texto e o contorno ficam vermelhos, ajudando você a notar
+-- possíveis speed hacks enquanto modera o seu jogo.
+-- OBS: isso é só visual, roda no cliente. Para banir/agir de forma
+-- confiável é preciso validar no servidor (o cliente pode ser enganado).
+
+local ESP_SPEED_THRESHOLD = 40 -- acima disso, marca como suspeito
+
+local EspPage = newPage("Esp", false)
+newLabel(EspPage, "Esp", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+newLabel(EspPage, "Ativar esp", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+
+local espEntries = {} -- [char] = {Highlight=, Billboard=, NameLabel=, InfoLabel=, Player=}
+local espUpdateConn
+
+local function clearEsp()
+    for _, data in pairs(espEntries) do
+        if data.Highlight then data.Highlight:Destroy() end
+        if data.Billboard then data.Billboard:Destroy() end
+    end
+    espEntries = {}
+    if espUpdateConn then espUpdateConn:Disconnect(); espUpdateConn = nil end
+end
+
+local function addEspToCharacter(char, plr)
+    if espEntries[char] then return end
+
+    local hl = Instance.new("Highlight")
+    hl.FillColor = Themes[State.CurrentTheme].Accent
+    hl.FillTransparency = 0.65
+    hl.OutlineColor = Color3.fromRGB(255,255,255)
+    hl.Parent = char
+
+    local head = char:FindFirstChild("Head") or char:WaitForChild("Head", 2)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "EspInfo"
+    billboard.Size = UDim2.new(0, 160, 0, 44)
+    billboard.StudsOffset = Vector3.new(0, 2.2, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Adornee = head
+    billboard.Parent = head or char
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(1, 0, 0, 18)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 14
+    nameLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    nameLabel.TextStrokeTransparency = 0.4
+    nameLabel.Text = plr and plr.Name or "?"
+    nameLabel.Parent = billboard
+
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Size = UDim2.new(1, 0, 0, 24)
+    infoLabel.Position = UDim2.new(0, 0, 0, 18)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.Font = Enum.Font.Gotham
+    infoLabel.TextSize = 12
+    infoLabel.TextColor3 = Color3.fromRGB(220,220,225)
+    infoLabel.TextStrokeTransparency = 0.5
+    infoLabel.Text = "..."
+    infoLabel.Parent = billboard
+
+    espEntries[char] = {
+        Highlight = hl,
+        Billboard = billboard,
+        NameLabel = nameLabel,
+        InfoLabel = infoLabel,
+        Player = plr,
+    }
+end
+
+local function startEspUpdateLoop()
+    if espUpdateConn then return end
+    espUpdateConn = RunService.Heartbeat:Connect(function()
+        if not State.EspEnabled then return end
+        local myChar = LocalPlayer.Character
+        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+        for char, data in pairs(espEntries) do
+            if not char.Parent then
+                -- personagem saiu / morreu, limpa a entrada
+                if data.Highlight then data.Highlight:Destroy() end
+                if data.Billboard then data.Billboard:Destroy() end
+                espEntries[char] = nil
+            else
+                local root = char:FindFirstChild("HumanoidRootPart")
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if root and hum then
+                    -- distância
+                    local distance = myRoot and (myRoot.Position - root.Position).Magnitude or 0
+
+                    -- velocidade real observada (horizontal), não apenas a propriedade WalkSpeed
+                    local vel = root.AssemblyLinearVelocity
+                    local horizontalSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+
+                    local suspicious = horizontalSpeed > ESP_SPEED_THRESHOLD
+                    local color = suspicious and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(220,220,225)
+
+                    data.InfoLabel.TextColor3 = color
+                    data.Highlight.OutlineColor = suspicious and Color3.fromRGB(255,60,60) or Color3.fromRGB(255,255,255)
+                    data.Highlight.FillColor = suspicious and Color3.fromRGB(255,60,60) or Themes[State.CurrentTheme].Accent
+
+                    data.InfoLabel.Text = string.format(
+                        "%dm | HP %d/%d | Vel %d%s",
+                        math.floor(distance),
+                        math.floor(hum.Health),
+                        math.floor(hum.MaxHealth),
+                        math.floor(horizontalSpeed),
+                        suspicious and " ⚠" or ""
+                    )
+                end
+            end
+        end
+    end)
+end
+
+local function refreshEsp()
+    if not State.EspEnabled then return end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            addEspToCharacter(plr.Character, plr)
+        end
+    end
+    startEspUpdateLoop()
+end
+
+Players.PlayerAdded:Connect(function(plr)
+    plr.CharacterAdded:Connect(function(char)
+        if State.EspEnabled and plr ~= LocalPlayer then
+            addEspToCharacter(char, plr)
+        end
+    end)
+end)
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    if plr ~= LocalPlayer then
+        plr.CharacterAdded:Connect(function(char)
+            if State.EspEnabled then addEspToCharacter(char, plr) end
+        end)
+    end
+end
+
+do
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(0, 44, 0, 22)
+    track.Position = UDim2.new(1, -64, 0, 57)
+    track.BackgroundColor3 = Color3.fromRGB(70,70,75)
+    track.BorderSizePixel = 0
+    track.Parent = EspPage
+    round(track, 11)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = UDim2.new(0, 2, 0.5, -9)
+    knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    knob.Parent = track
+    circle(knob)
+    local btn = Instance.new("TextButton")
+    btn.BackgroundTransparency = 1
+    btn.Size = UDim2.new(1,0,1,0)
+    btn.Text = ""
+    btn.Parent = track
+    btn.MouseButton1Click:Connect(function()
+        State.EspEnabled = not State.EspEnabled
+        tween(knob, {Position = State.EspEnabled and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}, 0.2)
+        tween(track, {BackgroundColor3 = State.EspEnabled and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)}, 0.2)
+        if State.EspEnabled then
+            refreshEsp()
+        else
+            clearEsp()
+        end
+    end)
+end
+
+------------------------------------------------------------
+-- BOTÃO AUTO SAVE (dentro de Settings) - criado agora que temos tween/toggle padrão
+------------------------------------------------------------
+do
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(0, 44, 0, 22)
+    track.Position = UDim2.new(1, -64, 0, 55)
+    track.BackgroundColor3 = Themes[State.CurrentTheme].Accent -- padrão ligado
+    track.BorderSizePixel = 0
+    track.Parent = SettingsPage
+    round(track, 11)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = UDim2.new(1, -20, 0.5, -9) -- padrão ligado (direita)
+    knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    knob.Parent = track
+    circle(knob)
+    local btn = Instance.new("TextButton")
+    btn.BackgroundTransparency = 1
+    btn.Size = UDim2.new(1,0,1,0)
+    btn.Text = ""
+    btn.Parent = track
+    btn.MouseButton1Click:Connect(function()
+        State.AutoSave = not State.AutoSave
+        tween(knob, {Position = State.AutoSave and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}, 0.2)
+        tween(track, {BackgroundColor3 = State.AutoSave and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)}, 0.2)
+    end)
+end
+
+-- Botão "Temas" dentro de Settings
+local ThemesBtn = Instance.new("TextButton")
+ThemesBtn.Size = UDim2.new(1, -40, 0, 34)
+ThemesBtn.Position = UDim2.new(0, 20, 0, 100)
+ThemesBtn.BackgroundColor3 = Color3.fromRGB(255,255,255)
+ThemesBtn.BackgroundTransparency = 0.9
+ThemesBtn.Text = "Temas"
+ThemesBtn.TextColor3 = Themes[State.CurrentTheme].Text
+ThemesBtn.Font = Enum.Font.GothamMedium
+ThemesBtn.TextSize = 15
+ThemesBtn.Parent = SettingsPage
+round(ThemesBtn, 10)
+
+------------------------------------------------------------
+-- NAVEGAÇÃO ENTRE PÁGINAS
+------------------------------------------------------------
+local function showPage(name)
+    for pname, frame in pairs(Pages) do
+        frame.Visible = (pname == name)
+    end
+    State.CurrentPage = name
+end
+
+-- Botões do menu
+menuButton("Fly", 10, function() showPage("Fly") end)
+menuButton("Noclip", 50, function() showPage("Noclip") end)
+menuButton("Esp", 90, function() showPage("Esp") end)
+menuButton("Configurações", 130, function() showPage("Settings") end)
+
+-- Setas de voltar
+backArrow(SettingsPage, function() showPage("Menu") end)
+backArrow(ThemesPage, function() showPage("Settings") end)
+backArrow(FlyPage, function() showPage("Menu") end)
+backArrow(NoclipPage, function() showPage("Menu") end)
+backArrow(EspPage, function() showPage("Menu") end)
+
+ThemesBtn.MouseButton1Click:Connect(function()
+    showPage("Themes")
+end)
+
+-- Hambúrguer: alterna Speed <-> Menu, roda o ícone
+local hamburgerOpen = false
+HamburgerBtn.MouseButton1Click:Connect(function()
+    if State.CurrentPage == "Speed" then
+        hamburgerOpen = true
+        tween(HamburgerBtn, {Rotation = 90}, 0.25)
+        showPage("Menu")
+    else
+        hamburgerOpen = false
+        tween(HamburgerBtn, {Rotation = 0}, 0.25)
+        showPage("Speed")
+    end
+end)
+
+------------------------------------------------------------
+-- ABRIR / FECHAR / MINIMIZAR (ANIMAÇÕES)
+------------------------------------------------------------
+local FULL_SIZE = UDim2.new(0, 300, 0, 230)
+local MINI_SIZE = UDim2.new(0, 300, 0, 40)
+
+local function openGui()
+    State.IsClosed = false
+    Main.Visible = true
+    Main.Size = UDim2.new(0, 0, 0, 0)
+    Main.BackgroundTransparency = 1
+    mainStroke.Transparency = 1
+    tween(Blur, {Size = 14}, 0.35)
+    tween(Main, {Size = FULL_SIZE, BackgroundTransparency = 0.35}, 0.35, Enum.EasingStyle.Back)
+    tween(mainStroke, {Transparency = 0.75}, 0.35)
+end
+
+local function closeGui()
+    State.IsClosed = true
+    tween(Blur, {Size = 0}, 0.3)
+    local t = tween(Main, {Size = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1}, 0.3, Enum.EasingStyle.Quint)
+    tween(mainStroke, {Transparency = 1}, 0.3)
+    task.delay(0.3, function()
+        if State.IsClosed then
+            Main.Visible = false
+        end
+    end)
+end
+
+CloseBtn.MouseButton1Click:Connect(closeGui)
+
+MinimizeBtn.MouseButton1Click:Connect(function()
+    State.IsMinimized = not State.IsMinimized
+    if State.IsMinimized then
+        tween(Main, {Size = MINI_SIZE}, 0.3)
+        tween(Content, {BackgroundTransparency = 1}, 0.15)
+        Content.Visible = false
+    else
+        Content.Visible = true
+        tween(Main, {Size = FULL_SIZE}, 0.3)
+    end
+end)
+
+-- Tecla Q reabre a GUI
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.Q then
+        if State.IsClosed then
+            openGui()
+        end
+    end
+end)
+
+------------------------------------------------------------
+-- REAPLICAR VELOCIDADE / ESTADOS AO RESPAWNAR
+------------------------------------------------------------
+LocalPlayer.CharacterAdded:Connect(function(char)
+    local hum = char:WaitForChild("Humanoid")
+    hum.WalkSpeed = State.Speed
+    if State.FlyEnabled then
+        task.wait(0.5)
+        startFly()
+    end
+end)
+
+------------------------------------------------------------
+-- ANIMAÇÃO DE ABERTURA NA PRIMEIRA EXECUÇÃO
+------------------------------------------------------------
+openGui()

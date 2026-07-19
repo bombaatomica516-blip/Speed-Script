@@ -36,7 +36,7 @@ if oldBlur then oldBlur:Destroy() end
 -- CONFIGURAÇÃO / TEMAS
 ------------------------------------------------------------
 local Themes = {
-    Dark   = {Main = Color3.fromRGB(22, 22, 26),  Accent = Color3.fromRGB(88, 121, 255), Text = Color3.fromRGB(235,235,240)},
+    Dark   = {Main = Color3.fromRGB(38, 38, 40),  Accent = Color3.fromRGB(88, 121, 255), Text = Color3.fromRGB(235,235,240)},
     Purple = {Main = Color3.fromRGB(26, 20, 32),  Accent = Color3.fromRGB(168, 85, 247), Text = Color3.fromRGB(240,235,245)},
     Blue   = {Main = Color3.fromRGB(16, 24, 34),  Accent = Color3.fromRGB(56, 189, 248), Text = Color3.fromRGB(230,240,245)},
     Green  = {Main = Color3.fromRGB(18, 26, 22),  Accent = Color3.fromRGB(74, 222, 128), Text = Color3.fromRGB(230,245,235)},
@@ -116,14 +116,6 @@ local function newLabel(parent, text, size, position, textSize, bold, alignX)
 end
 
 ------------------------------------------------------------
--- BLUR (efeito de vidro por trás da GUI)
-------------------------------------------------------------
-local Blur = Instance.new("BlurEffect")
-Blur.Name = "SpeedHubBlur"
-Blur.Size = 0
-Blur.Parent = Lighting
-
-------------------------------------------------------------
 -- SCREEN GUI + MAIN FRAME
 ------------------------------------------------------------
 local ScreenGui = Instance.new("ScreenGui")
@@ -133,6 +125,31 @@ ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder = 50
 ScreenGui.Parent = PlayerGui
 
+-- Sombra (técnica sem imagem: camadas empilhadas com transparência crescente,
+-- dão profundidade ao painel sem precisar de blur)
+local ShadowHolder = Instance.new("Frame")
+ShadowHolder.Name = "ShadowHolder"
+ShadowHolder.AnchorPoint = Vector2.new(0.5, 0.5)
+ShadowHolder.Position = UDim2.new(0.5, 0, 0.5, 0)
+ShadowHolder.Size = UDim2.new(0, 300, 0, 230)
+ShadowHolder.BackgroundTransparency = 1
+ShadowHolder.ZIndex = 0
+ShadowHolder.Parent = ScreenGui
+
+for i = 1, 4 do
+    local layer = Instance.new("Frame")
+    layer.Name = "ShadowLayer"..i
+    layer.AnchorPoint = Vector2.new(0.5, 0.5)
+    layer.Position = UDim2.new(0.5, 0, 0.5, 2 + i * 2)
+    layer.Size = UDim2.new(1, i * 4, 1, i * 4)
+    layer.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    layer.BackgroundTransparency = 0.88 + (i * 0.025)
+    layer.BorderSizePixel = 0
+    layer.ZIndex = 0
+    layer.Parent = ShadowHolder
+    round(layer, 18 + i * 2)
+end
+
 local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -141,9 +158,52 @@ Main.Size = UDim2.new(0, 300, 0, 230)
 Main.BackgroundColor3 = Themes[State.CurrentTheme].Main
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
+Main.ZIndex = 1
 Main.Parent = ScreenGui
 round(Main, 18)
-local mainStroke = glass(Main, 0.35)
+local mainStroke = glass(Main, 0.15)
+
+-- Arrastar a GUI pela barra superior
+do
+    local dragging = false
+    local dragInput, dragStart, startPos
+
+    local function updateDrag(input)
+        local delta = input.Position - dragStart
+        local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        Main.Position = newPos
+        ShadowHolder.Position = newPos
+    end
+
+    local function beginDrag(input)
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+
+    Main.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            beginDrag(input)
+        end
+    end)
+
+    Main.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            updateDrag(input)
+        end
+    end)
+end
 
 ------------------------------------------------------------
 -- TOP BAR
@@ -213,15 +273,24 @@ Content.BackgroundTransparency = 1
 Content.Parent = Main
 
 local Pages = {}
+local PageScales = {}
 
 local function newPage(name, visible)
     local p = Instance.new("Frame")
     p.Name = name
+    p.AnchorPoint = Vector2.new(0.5, 0.5)
+    p.Position = UDim2.new(0.5, 0, 0.5, 0)
     p.Size = UDim2.new(1, 0, 1, 0)
     p.BackgroundTransparency = 1
     p.Visible = visible or false
     p.Parent = Content
+
+    local scale = Instance.new("UIScale")
+    scale.Scale = 1
+    scale.Parent = p
+
     Pages[name] = p
+    PageScales[name] = scale
     return p
 end
 
@@ -798,8 +867,17 @@ round(ThemesBtn, 10)
 ------------------------------------------------------------
 local function showPage(name)
     for pname, frame in pairs(Pages) do
-        frame.Visible = (pname == name)
+        if pname ~= name then
+            frame.Visible = false
+        end
     end
+
+    local targetPage = Pages[name]
+    local targetScale = PageScales[name]
+    targetScale.Scale = 0
+    targetPage.Visible = true
+    tween(targetScale, {Scale = 1}, 0.3, Enum.EasingStyle.Back)
+
     State.CurrentPage = name
 end
 
@@ -843,22 +921,22 @@ local MINI_SIZE = UDim2.new(0, 300, 0, 40)
 local function openGui()
     State.IsClosed = false
     Main.Visible = true
+    ShadowHolder.Visible = true
     Main.Size = UDim2.new(0, 0, 0, 0)
     Main.BackgroundTransparency = 1
     mainStroke.Transparency = 1
-    tween(Blur, {Size = 14}, 0.35)
-    tween(Main, {Size = FULL_SIZE, BackgroundTransparency = 0.35}, 0.35, Enum.EasingStyle.Back)
+    tween(Main, {Size = FULL_SIZE, BackgroundTransparency = 0.15}, 0.35, Enum.EasingStyle.Back)
     tween(mainStroke, {Transparency = 0.75}, 0.35)
 end
 
 local function closeGui()
     State.IsClosed = true
-    tween(Blur, {Size = 0}, 0.3)
     local t = tween(Main, {Size = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1}, 0.3, Enum.EasingStyle.Quint)
     tween(mainStroke, {Transparency = 1}, 0.3)
     task.delay(0.3, function()
         if State.IsClosed then
             Main.Visible = false
+            ShadowHolder.Visible = false
         end
     end)
 end

@@ -51,6 +51,7 @@ local State = {
     FlyEnabled     = false,
     NoclipEnabled  = false,
     EspEnabled     = false,
+    InvisibleEnabled = false,
     IsClosed       = false,
     IsMinimized    = false,
     CurrentPage    = "Speed",
@@ -131,7 +132,7 @@ local ShadowHolder = Instance.new("Frame")
 ShadowHolder.Name = "ShadowHolder"
 ShadowHolder.AnchorPoint = Vector2.new(0.5, 0.5)
 ShadowHolder.Position = UDim2.new(0.5, 0, 0.5, 0)
-ShadowHolder.Size = UDim2.new(0, 300, 0, 230)
+ShadowHolder.Size = UDim2.new(0, 300, 0, 270)
 ShadowHolder.BackgroundTransparency = 1
 ShadowHolder.ZIndex = 0
 ShadowHolder.Parent = ScreenGui
@@ -154,14 +155,14 @@ local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.AnchorPoint = Vector2.new(0.5, 0.5)
 Main.Position = UDim2.new(0.5, 0, 0.5, 0)
-Main.Size = UDim2.new(0, 300, 0, 230)
+Main.Size = UDim2.new(0, 300, 0, 270)
 Main.BackgroundColor3 = Themes[State.CurrentTheme].Main
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
 Main.ZIndex = 1
 Main.Parent = ScreenGui
 round(Main, 18)
-local mainStroke = glass(Main, 0.15)
+local mainStroke = glass(Main, 0.25)
 
 -- Arrastar a GUI pela barra superior
 do
@@ -223,15 +224,36 @@ HamburgerBtn.BackgroundTransparency = 1
 HamburgerBtn.Text = ""
 HamburgerBtn.Parent = TopBar
 
+local Lines = {}
+local LineDefaults = {}
+
 for i = 1, 3 do
     local line = Instance.new("Frame")
     line.Name = "Line"..i
+    line.AnchorPoint = Vector2.new(0.5, 0.5)
     line.Size = UDim2.new(0, 18, 0, 2)
-    line.Position = UDim2.new(0.5, -9, 0, 8 + (i-1)*7)
+    line.Position = UDim2.new(0.5, 0, 0, 9 + (i-1)*7)
     line.BackgroundColor3 = Themes[State.CurrentTheme].Text
     line.BorderSizePixel = 0
+    line.Rotation = 0
     round(line, 2)
     line.Parent = HamburgerBtn
+
+    local lineScale = Instance.new("UIScale")
+    lineScale.Scale = 1
+    lineScale.Parent = line
+
+    Lines[i] = line
+    LineDefaults[i] = {Position = line.Position, Rotation = 0, Scale = 1}
+end
+
+local function resetHamburgerLines()
+    for i, line in ipairs(Lines) do
+        local scale = line:FindFirstChildOfClass("UIScale")
+        line.Position = LineDefaults[i].Position
+        line.Rotation = LineDefaults[i].Rotation
+        scale.Scale = LineDefaults[i].Scale
+    end
 end
 
 -- Botão minimizar ( - )
@@ -460,15 +482,28 @@ end
 -- PÁGINA: SETTINGS (Configurações globais)
 ------------------------------------------------------------
 local SettingsPage = newPage("Settings", false)
-newLabel(SettingsPage, "Configurações", UDim2.new(0, 160, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+newLabel(SettingsPage, "Settings", UDim2.new(0, 160, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
 
 newLabel(SettingsPage, "Auto Save", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+
+-- Botão "Shortcuts" (abre a aba de atalhos personalizáveis)
+local ShortcutsBtn = Instance.new("TextButton")
+ShortcutsBtn.Size = UDim2.new(1, -40, 0, 34)
+ShortcutsBtn.Position = UDim2.new(0, 20, 0, 95)
+ShortcutsBtn.BackgroundColor3 = Color3.fromRGB(255,255,255)
+ShortcutsBtn.BackgroundTransparency = 0.9
+ShortcutsBtn.Text = "Shortcuts"
+ShortcutsBtn.TextColor3 = Themes[State.CurrentTheme].Text
+ShortcutsBtn.Font = Enum.Font.GothamMedium
+ShortcutsBtn.TextSize = 15
+ShortcutsBtn.Parent = SettingsPage
+round(ShortcutsBtn, 10)
 
 ------------------------------------------------------------
 -- PÁGINA: THEMES (Temas)
 ------------------------------------------------------------
 local ThemesPage = newPage("Themes", false)
-newLabel(ThemesPage, "Temas", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+newLabel(ThemesPage, "Themes", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
 
 local themeOrder = {"Dark", "Purple", "Blue", "Green"}
 local function applyTheme(name)
@@ -511,7 +546,7 @@ end
 ------------------------------------------------------------
 local FlyPage = newPage("Fly", false)
 newLabel(FlyPage, "Fly", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
-newLabel(FlyPage, "Ativar voo", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+newLabel(FlyPage, "Enable fly", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
 
 local flyBodyVelocity, flyBodyGyro
 local flyConnection
@@ -563,40 +598,71 @@ local function startFly()
     end)
 end
 
-local FlyTrack; local FlyToggleObj
-do
+-- Helper de toggle reutilizável, com animação de posição/cor + um "punch"
+-- de escala no botão pra dar mais feedback visual ao ligar/desligar
+local function createToggleSwitch(parent, position, default, onChange)
     local track = Instance.new("Frame")
     track.Size = UDim2.new(0, 44, 0, 22)
-    track.Position = UDim2.new(1, -64, 0, 57)
-    track.BackgroundColor3 = Color3.fromRGB(70,70,75)
+    track.Position = position
+    track.BackgroundColor3 = default and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)
     track.BorderSizePixel = 0
-    track.Parent = FlyPage
+    track.Parent = parent
     round(track, 11)
+
     local knob = Instance.new("Frame")
+    knob.AnchorPoint = Vector2.new(0.5, 0.5)
     knob.Size = UDim2.new(0, 18, 0, 18)
-    knob.Position = UDim2.new(0, 2, 0.5, -9)
+    knob.Position = default and UDim2.new(1, -11, 0.5, 0) or UDim2.new(0, 11, 0.5, 0)
     knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
     knob.Parent = track
     circle(knob)
+
     local btn = Instance.new("TextButton")
     btn.BackgroundTransparency = 1
-    btn.Size = UDim2.new(1,0,1,0)
+    btn.Size = UDim2.new(1, 0, 1, 0)
     btn.Text = ""
     btn.Parent = track
+
+    local enabled = default
+
+    local function applyVisual()
+        tween(knob, {Position = enabled and UDim2.new(1, -11, 0.5, 0) or UDim2.new(0, 11, 0.5, 0)}, 0.2)
+        tween(track, {BackgroundColor3 = enabled and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)}, 0.2)
+
+        -- punch de escala no botão pra reforçar o "clique"
+        tween(knob, {Size = UDim2.new(0, 23, 0, 23)}, 0.1, Enum.EasingStyle.Quad)
+        task.delay(0.1, function()
+            tween(knob, {Size = UDim2.new(0, 18, 0, 18)}, 0.15, Enum.EasingStyle.Back)
+        end)
+    end
+
+    -- Permite ligar/desligar programaticamente (usado pelos atalhos de teclado),
+    -- animando igual ao clique do mouse
+    local function setEnabled(value)
+        if enabled == value then return end
+        enabled = value
+        applyVisual()
+        if onChange then onChange(enabled) end
+    end
+
     btn.MouseButton1Click:Connect(function()
-        State.FlyEnabled = not State.FlyEnabled
-        tween(knob, {Position = State.FlyEnabled and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}, 0.2)
-        tween(track, {BackgroundColor3 = State.FlyEnabled and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)}, 0.2)
-        if State.FlyEnabled then startFly() else stopFly() end
+        setEnabled(not enabled)
     end)
+
+    return track, knob, setEnabled
 end
+
+local FlyTrack, FlyKnob, setFlyEnabled = createToggleSwitch(FlyPage, UDim2.new(1, -64, 0, 57), false, function(enabled)
+    State.FlyEnabled = enabled
+    if enabled then startFly() else stopFly() end
+end)
 
 ------------------------------------------------------------
 -- PÁGINA: NOCLIP
 ------------------------------------------------------------
 local NoclipPage = newPage("Noclip", false)
 newLabel(NoclipPage, "Noclip", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
-newLabel(NoclipPage, "Ativar noclip", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+newLabel(NoclipPage, "Enable noclip", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
 
 local noclipConnection
 local function stopNoclip()
@@ -615,32 +681,10 @@ local function startNoclip()
     end)
 end
 
-do
-    local track = Instance.new("Frame")
-    track.Size = UDim2.new(0, 44, 0, 22)
-    track.Position = UDim2.new(1, -64, 0, 57)
-    track.BackgroundColor3 = Color3.fromRGB(70,70,75)
-    track.BorderSizePixel = 0
-    track.Parent = NoclipPage
-    round(track, 11)
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 18, 0, 18)
-    knob.Position = UDim2.new(0, 2, 0.5, -9)
-    knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
-    knob.Parent = track
-    circle(knob)
-    local btn = Instance.new("TextButton")
-    btn.BackgroundTransparency = 1
-    btn.Size = UDim2.new(1,0,1,0)
-    btn.Text = ""
-    btn.Parent = track
-    btn.MouseButton1Click:Connect(function()
-        State.NoclipEnabled = not State.NoclipEnabled
-        tween(knob, {Position = State.NoclipEnabled and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}, 0.2)
-        tween(track, {BackgroundColor3 = State.NoclipEnabled and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)}, 0.2)
-        if State.NoclipEnabled then startNoclip() else stopNoclip() end
-    end)
-end
+local NoclipTrack, NoclipKnob, setNoclipEnabled = createToggleSwitch(NoclipPage, UDim2.new(1, -64, 0, 57), false, function(enabled)
+    State.NoclipEnabled = enabled
+    if enabled then startNoclip() else stopNoclip() end
+end)
 
 ------------------------------------------------------------
 -- PÁGINA: ESP (ferramenta de moderação / anti-cheat visual)
@@ -656,7 +700,7 @@ local ESP_SPEED_THRESHOLD = 40 -- acima disso, marca como suspeito
 
 local EspPage = newPage("Esp", false)
 newLabel(EspPage, "Esp", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
-newLabel(EspPage, "Ativar esp", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+newLabel(EspPage, "Enable esp", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
 
 local espEntries = {} -- [char] = {Highlight=, Billboard=, NameLabel=, InfoLabel=, Player=}
 local espUpdateConn
@@ -789,73 +833,64 @@ for _, plr in ipairs(Players:GetPlayers()) do
     end
 end
 
-do
-    local track = Instance.new("Frame")
-    track.Size = UDim2.new(0, 44, 0, 22)
-    track.Position = UDim2.new(1, -64, 0, 57)
-    track.BackgroundColor3 = Color3.fromRGB(70,70,75)
-    track.BorderSizePixel = 0
-    track.Parent = EspPage
-    round(track, 11)
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 18, 0, 18)
-    knob.Position = UDim2.new(0, 2, 0.5, -9)
-    knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
-    knob.Parent = track
-    circle(knob)
-    local btn = Instance.new("TextButton")
-    btn.BackgroundTransparency = 1
-    btn.Size = UDim2.new(1,0,1,0)
-    btn.Text = ""
-    btn.Parent = track
-    btn.MouseButton1Click:Connect(function()
-        State.EspEnabled = not State.EspEnabled
-        tween(knob, {Position = State.EspEnabled and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}, 0.2)
-        tween(track, {BackgroundColor3 = State.EspEnabled and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)}, 0.2)
-        if State.EspEnabled then
-            refreshEsp()
-        else
-            clearEsp()
+local EspTrack, EspKnob, setEspEnabled = createToggleSwitch(EspPage, UDim2.new(1, -64, 0, 57), false, function(enabled)
+    State.EspEnabled = enabled
+    if enabled then
+        refreshEsp()
+    else
+        clearEsp()
+    end
+end)
+
+------------------------------------------------------------
+-- PÁGINA: INVISIBLE
+------------------------------------------------------------
+local InvisiblePage = newPage("Invisible", false)
+newLabel(InvisiblePage, "Invisible", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+newLabel(InvisiblePage, "Enable invisible", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+
+local originalTransparency = {}
+
+local function setInvisible(enabled)
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    if enabled then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") or part:IsA("Decal") then
+                originalTransparency[part] = part.Transparency
+                part.Transparency = 1
+            end
         end
-    end)
+    else
+        for part, t in pairs(originalTransparency) do
+            if part and part.Parent then
+                part.Transparency = t
+            end
+        end
+        originalTransparency = {}
+    end
 end
 
-------------------------------------------------------------
--- BOTÃO AUTO SAVE (dentro de Settings) - criado agora que temos tween/toggle padrão
-------------------------------------------------------------
-do
-    local track = Instance.new("Frame")
-    track.Size = UDim2.new(0, 44, 0, 22)
-    track.Position = UDim2.new(1, -64, 0, 55)
-    track.BackgroundColor3 = Themes[State.CurrentTheme].Accent -- padrão ligado
-    track.BorderSizePixel = 0
-    track.Parent = SettingsPage
-    round(track, 11)
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 18, 0, 18)
-    knob.Position = UDim2.new(1, -20, 0.5, -9) -- padrão ligado (direita)
-    knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
-    knob.Parent = track
-    circle(knob)
-    local btn = Instance.new("TextButton")
-    btn.BackgroundTransparency = 1
-    btn.Size = UDim2.new(1,0,1,0)
-    btn.Text = ""
-    btn.Parent = track
-    btn.MouseButton1Click:Connect(function()
-        State.AutoSave = not State.AutoSave
-        tween(knob, {Position = State.AutoSave and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)}, 0.2)
-        tween(track, {BackgroundColor3 = State.AutoSave and Themes[State.CurrentTheme].Accent or Color3.fromRGB(70,70,75)}, 0.2)
-    end)
-end
+local InvisibleTrack, InvisibleKnob, setInvisibleEnabled = createToggleSwitch(InvisiblePage, UDim2.new(1, -64, 0, 57), false, function(enabled)
+    State.InvisibleEnabled = enabled
+    setInvisible(enabled)
+end)
 
--- Botão "Temas" dentro de Settings
+------------------------------------------------------------
+-- BOTÃO AUTO SAVE (dentro de Settings)
+------------------------------------------------------------
+local AutoSaveTrack, AutoSaveKnob = createToggleSwitch(SettingsPage, UDim2.new(1, -64, 0, 55), true, function(enabled)
+    State.AutoSave = enabled
+end)
+
+-- Botão "Themes" dentro de Settings
 local ThemesBtn = Instance.new("TextButton")
 ThemesBtn.Size = UDim2.new(1, -40, 0, 34)
-ThemesBtn.Position = UDim2.new(0, 20, 0, 100)
+ThemesBtn.Position = UDim2.new(0, 20, 0, 140)
 ThemesBtn.BackgroundColor3 = Color3.fromRGB(255,255,255)
 ThemesBtn.BackgroundTransparency = 0.9
-ThemesBtn.Text = "Temas"
+ThemesBtn.Text = "Themes"
 ThemesBtn.TextColor3 = Themes[State.CurrentTheme].Text
 ThemesBtn.Font = Enum.Font.GothamMedium
 ThemesBtn.TextSize = 15
@@ -863,15 +898,117 @@ ThemesBtn.Parent = SettingsPage
 round(ThemesBtn, 10)
 
 ------------------------------------------------------------
+-- PÁGINA: SHORTCUTS (atalhos personalizáveis)
+------------------------------------------------------------
+local ShortcutsPage = newPage("Shortcuts", false)
+newLabel(ShortcutsPage, "Shortcuts", UDim2.new(0, 160, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+
+-- Teclas padrão de cada função
+local Keybinds = {
+    Fly       = Enum.KeyCode.F,
+    Noclip    = Enum.KeyCode.E,
+    Esp       = Enum.KeyCode.Q,
+    Invisible = Enum.KeyCode.T,
+}
+
+local KeyDisplayButtons = {}
+local waitingForRebind = nil
+
+local SaveBtn = Instance.new("TextButton")
+SaveBtn.Name = "SaveBtn"
+SaveBtn.Size = UDim2.new(0, 70, 0, 28)
+SaveBtn.Position = UDim2.new(1, -90, 0, 178)
+SaveBtn.BackgroundColor3 = Color3.fromRGB(70, 120, 240)
+SaveBtn.Text = "Save"
+SaveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SaveBtn.Font = Enum.Font.GothamBold
+SaveBtn.TextSize = 14
+SaveBtn.Visible = false
+SaveBtn.Parent = ShortcutsPage
+round(SaveBtn, 8)
+
+local saveScale = Instance.new("UIScale")
+saveScale.Scale = 0
+saveScale.Parent = SaveBtn
+
+local function showSaveButton()
+    SaveBtn.Visible = true
+    saveScale.Scale = 0
+    tween(saveScale, {Scale = 1}, 0.22, Enum.EasingStyle.Back)
+end
+
+SaveBtn.MouseButton1Click:Connect(function()
+    -- "Salva" os atalhos (já estão aplicados em tempo real); aqui só damos
+    -- o feedback visual de confirmação e escondemos o botão de novo
+    tween(saveScale, {Scale = 0}, 0.18, Enum.EasingStyle.Quad)
+    task.delay(0.18, function()
+        SaveBtn.Visible = false
+    end)
+end)
+
+local function createShortcutRow(actionName, displayName, yPos)
+    newLabel(ShortcutsPage, displayName, UDim2.new(0, 140, 0, 20), UDim2.new(0, 20, 0, yPos + 6), 14, false)
+
+    local keyBtn = Instance.new("TextButton")
+    keyBtn.Size = UDim2.new(0, 60, 0, 28)
+    keyBtn.Position = UDim2.new(1, -80, 0, yPos)
+    keyBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    keyBtn.BackgroundTransparency = 0.85
+    keyBtn.Text = Keybinds[actionName].Name
+    keyBtn.TextColor3 = Themes[State.CurrentTheme].Text
+    keyBtn.Font = Enum.Font.GothamBold
+    keyBtn.TextSize = 14
+    keyBtn.Parent = ShortcutsPage
+    round(keyBtn, 8)
+
+    KeyDisplayButtons[actionName] = keyBtn
+
+    keyBtn.MouseButton1Click:Connect(function()
+        waitingForRebind = actionName
+        keyBtn.Text = "..."
+        tween(keyBtn, {BackgroundTransparency = 0.6}, 0.15)
+    end)
+
+    return keyBtn
+end
+
+createShortcutRow("Fly", "Fly", 40)
+createShortcutRow("Noclip", "Noclip", 74)
+createShortcutRow("Esp", "Esp", 108)
+createShortcutRow("Invisible", "Invisible", 142)
+
+-- Captura a próxima tecla pressionada quando um atalho está sendo editado
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if waitingForRebind and input.UserInputType == Enum.UserInputType.Keyboard then
+        local actionName = waitingForRebind
+        Keybinds[actionName] = input.KeyCode
+        local keyBtn = KeyDisplayButtons[actionName]
+        keyBtn.Text = input.KeyCode.Name
+        tween(keyBtn, {BackgroundTransparency = 0.85}, 0.15)
+        waitingForRebind = nil
+        showSaveButton()
+    end
+end)
+
+------------------------------------------------------------
 -- NAVEGAÇÃO ENTRE PÁGINAS
 ------------------------------------------------------------
 local function showPage(name)
-    for pname, frame in pairs(Pages) do
-        if pname ~= name then
-            frame.Visible = false
-        end
+    if State.CurrentPage == name then return end
+
+    local previousName = State.CurrentPage
+    local previousPage = Pages[previousName]
+    local previousScale = PageScales[previousName]
+
+    -- animação de fechamento: a página atual encolhe de fora pro centro
+    if previousPage and previousScale then
+        tween(previousScale, {Scale = 0}, 0.2, Enum.EasingStyle.Quad)
+        task.delay(0.2, function()
+            previousPage.Visible = false
+        end)
     end
 
+    -- animação de abertura: a nova página nasce do centro pra fora
     local targetPage = Pages[name]
     local targetScale = PageScales[name]
     targetScale.Scale = 0
@@ -885,7 +1022,8 @@ end
 menuButton("Fly", 10, function() showPage("Fly") end)
 menuButton("Noclip", 50, function() showPage("Noclip") end)
 menuButton("Esp", 90, function() showPage("Esp") end)
-menuButton("Configurações", 130, function() showPage("Settings") end)
+menuButton("Invisible", 130, function() showPage("Invisible") end)
+menuButton("Settings", 170, function() showPage("Settings") end)
 
 -- Setas de voltar
 backArrow(SettingsPage, function() showPage("Menu") end)
@@ -893,9 +1031,32 @@ backArrow(ThemesPage, function() showPage("Settings") end)
 backArrow(FlyPage, function() showPage("Menu") end)
 backArrow(NoclipPage, function() showPage("Menu") end)
 backArrow(EspPage, function() showPage("Menu") end)
+backArrow(InvisiblePage, function() showPage("Menu") end)
+backArrow(ShortcutsPage, function() showPage("Settings") end)
+
+ShortcutsBtn.MouseButton1Click:Connect(function()
+    showPage("Shortcuts")
+end)
 
 ThemesBtn.MouseButton1Click:Connect(function()
     showPage("Themes")
+end)
+
+-- Atalhos de teclado (personalizáveis na aba Shortcuts) pra ligar/desligar
+-- Fly, Noclip, Esp e Invisible sem precisar abrir o menu
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed or waitingForRebind then return end
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+    if input.KeyCode == Keybinds.Fly then
+        setFlyEnabled(not State.FlyEnabled)
+    elseif input.KeyCode == Keybinds.Noclip then
+        setNoclipEnabled(not State.NoclipEnabled)
+    elseif input.KeyCode == Keybinds.Esp and not State.IsClosed then
+        setEspEnabled(not State.EspEnabled)
+    elseif input.KeyCode == Keybinds.Invisible then
+        setInvisibleEnabled(not State.InvisibleEnabled)
+    end
 end)
 
 -- Hambúrguer: alterna Speed <-> Menu, roda o ícone
@@ -915,29 +1076,80 @@ end)
 ------------------------------------------------------------
 -- ABRIR / FECHAR / MINIMIZAR (ANIMAÇÕES)
 ------------------------------------------------------------
-local FULL_SIZE = UDim2.new(0, 300, 0, 230)
+local FULL_SIZE = UDim2.new(0, 300, 0, 270)
 local MINI_SIZE = UDim2.new(0, 300, 0, 40)
+
+-- Apaga todo o conteúdo do painel (exceto o ícone de hambúrguer), usado
+-- durante a sequência de fechamento
+local function fadeOutContent(duration)
+    for _, obj in ipairs(Main:GetDescendants()) do
+        if obj ~= HamburgerBtn and not obj:IsDescendantOf(HamburgerBtn) then
+            if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+                tween(obj, {TextTransparency = 1, BackgroundTransparency = 1}, duration)
+            elseif obj:IsA("Frame") and obj ~= TopBar then
+                tween(obj, {BackgroundTransparency = 1}, duration)
+            elseif obj:IsA("UIStroke") then
+                tween(obj, {Transparency = 1}, duration)
+            end
+        end
+    end
+end
 
 local function openGui()
     State.IsClosed = false
+
+    -- reseta o ícone do hambúrguer e o conteúdo antes de abrir
+    resetHamburgerLines()
+    HamburgerBtn.Rotation = 0
+    showPage("Speed")
+
     Main.Visible = true
     ShadowHolder.Visible = true
     Main.Size = UDim2.new(0, 0, 0, 0)
     Main.BackgroundTransparency = 1
     mainStroke.Transparency = 1
-    tween(Main, {Size = FULL_SIZE, BackgroundTransparency = 0.15}, 0.35, Enum.EasingStyle.Back)
+    tween(Main, {Size = FULL_SIZE, BackgroundTransparency = 0.25}, 0.35, Enum.EasingStyle.Back)
     tween(mainStroke, {Transparency = 0.75}, 0.35)
 end
 
 local function closeGui()
+    if State.IsClosed then return end
     State.IsClosed = true
-    local t = tween(Main, {Size = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1}, 0.3, Enum.EasingStyle.Quint)
-    tween(mainStroke, {Transparency = 1}, 0.3)
-    task.delay(0.3, function()
-        if State.IsClosed then
-            Main.Visible = false
-            ShadowHolder.Visible = false
-        end
+    HamburgerBtn.Rotation = 0
+
+    task.spawn(function()
+        local step = 0.22
+        local centerY = LineDefaults[2].Position
+
+        -- Passo 1: as 3 linhas convergem ao centro enquanto o resto do
+        -- painel desaparece
+        fadeOutContent(step)
+        tween(Lines[1], {Position = centerY}, step)
+        tween(Lines[3], {Position = centerY}, step)
+        task.wait(step)
+
+        -- Passo 2: as 3 linhas giram para a vertical
+        tween(Lines[1], {Rotation = 90}, 0.2)
+        tween(Lines[2], {Rotation = 90}, 0.2)
+        tween(Lines[3], {Rotation = 90}, 0.2)
+        task.wait(0.2)
+
+        -- Passo 3: as linhas de fora se fecham dos dois lados (centro pra fora ao contrário: encolhem pro centro)
+        local line1Scale = Lines[1]:FindFirstChildOfClass("UIScale")
+        local line3Scale = Lines[3]:FindFirstChildOfClass("UIScale")
+        tween(line1Scale, {Scale = 0}, 0.22)
+        tween(line3Scale, {Scale = 0}, 0.22)
+        task.wait(0.22)
+
+        -- Passo 4: a linha do meio volta pra horizontal e se fecha também dos dois lados
+        tween(Lines[2], {Rotation = 0}, 0.18)
+        task.wait(0.18)
+        local line2Scale = Lines[2]:FindFirstChildOfClass("UIScale")
+        tween(line2Scale, {Scale = 0}, 0.22)
+        task.wait(0.22)
+
+        Main.Visible = false
+        ShadowHolder.Visible = false
     end)
 end
 
@@ -974,6 +1186,13 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     if State.FlyEnabled then
         task.wait(0.5)
         startFly()
+    end
+    if State.NoclipEnabled then
+        startNoclip()
+    end
+    if State.InvisibleEnabled then
+        task.wait(0.2)
+        setInvisible(true)
     end
 end)
 

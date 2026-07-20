@@ -132,7 +132,7 @@ local ShadowHolder = Instance.new("Frame")
 ShadowHolder.Name = "ShadowHolder"
 ShadowHolder.AnchorPoint = Vector2.new(0.5, 0.5)
 ShadowHolder.Position = UDim2.new(0.5, 0, 0.5, 0)
-ShadowHolder.Size = UDim2.new(0, 300, 0, 270)
+ShadowHolder.Size = UDim2.new(0, 300, 0, 300)
 ShadowHolder.BackgroundTransparency = 1
 ShadowHolder.ZIndex = 0
 ShadowHolder.Parent = ScreenGui
@@ -155,7 +155,7 @@ local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.AnchorPoint = Vector2.new(0.5, 0.5)
 Main.Position = UDim2.new(0.5, 0, 0.5, 0)
-Main.Size = UDim2.new(0, 300, 0, 270)
+Main.Size = UDim2.new(0, 300, 0, 300)
 Main.BackgroundColor3 = Themes[State.CurrentTheme].Main
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
@@ -878,6 +878,154 @@ local InvisibleTrack, InvisibleKnob, setInvisibleEnabled = createToggleSwitch(In
 end)
 
 ------------------------------------------------------------
+-- PÁGINA: AIM TRAINER (treino de mira isolado, não afeta partidas
+-- reais nem outros jogadores — os alvos são partes soltas no ar)
+------------------------------------------------------------
+local AimTrainerPage = newPage("AimTrainer", false)
+newLabel(AimTrainerPage, "Aim Trainer", UDim2.new(0, 160, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+
+local StatsLabel = newLabel(AimTrainerPage, "Hits: 0   Misses: 0   Accuracy: 0%", UDim2.new(1, -40, 0, 20), UDim2.new(0, 20, 0, 50), 13, false)
+local TimeLabel = newLabel(AimTrainerPage, "Time: 30s", UDim2.new(1, -40, 0, 20), UDim2.new(0, 20, 0, 74), 13, false)
+local BestLabel = newLabel(AimTrainerPage, "Best accuracy: --", UDim2.new(1, -40, 0, 20), UDim2.new(0, 20, 0, 98), 12, false)
+BestLabel.TextTransparency = 0.35
+
+local StartStopBtn = Instance.new("TextButton")
+StartStopBtn.Size = UDim2.new(1, -40, 0, 36)
+StartStopBtn.Position = UDim2.new(0, 20, 0, 135)
+StartStopBtn.BackgroundColor3 = Themes[State.CurrentTheme].Accent
+StartStopBtn.Text = "Start"
+StartStopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+StartStopBtn.Font = Enum.Font.GothamBold
+StartStopBtn.TextSize = 15
+StartStopBtn.Parent = AimTrainerPage
+round(StartStopBtn, 10)
+
+-- Pasta isolada só pros alvos do treino (limpa qualquer resto de execuções anteriores)
+local oldRange = workspace:FindFirstChild("AimTrainerRange")
+if oldRange then oldRange:Destroy() end
+
+local TargetsFolder = Instance.new("Folder")
+TargetsFolder.Name = "AimTrainerRange"
+TargetsFolder.Parent = workspace
+
+local aimSessionActive = false
+local currentTarget = nil
+local hits, misses = 0, 0
+local sessionDuration = 30
+local timeLeft = sessionDuration
+local bestAccuracy = nil
+local mouse = LocalPlayer:GetMouse()
+
+local function updateStatsLabel()
+    local total = hits + misses
+    local accuracy = total > 0 and math.floor((hits / total) * 100) or 0
+    StatsLabel.Text = string.format("Hits: %d   Misses: %d   Accuracy: %d%%", hits, misses, accuracy)
+end
+
+local function destroyCurrentTarget()
+    if currentTarget then
+        currentTarget:Destroy()
+        currentTarget = nil
+    end
+end
+
+local function spawnTarget()
+    destroyCurrentTarget()
+
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    local offsetX = math.random(-8, 8)
+    local offsetY = math.random(-3, 4)
+    local distance = math.random(12, 22)
+
+    local targetCFrame = camera.CFrame * CFrame.new(offsetX, offsetY, -distance)
+
+    local part = Instance.new("Part")
+    part.Name = "AimTarget"
+    part.Shape = Enum.PartType.Ball
+    part.Size = Vector3.new(2, 2, 2)
+    part.Anchored = true
+    part.CanCollide = false
+    part.Material = Enum.Material.Neon
+    part.Color = Themes[State.CurrentTheme].Accent
+    part.CFrame = targetCFrame
+    part.Parent = TargetsFolder
+
+    local click = Instance.new("ClickDetector")
+    click.MaxActivationDistance = 1000
+    click.Parent = part
+
+    click.MouseClick:Connect(function(clickingPlayer)
+        if clickingPlayer ~= LocalPlayer or not aimSessionActive then return end
+        if currentTarget ~= part then return end
+        hits += 1
+        updateStatsLabel()
+        spawnTarget()
+    end)
+
+    currentTarget = part
+end
+
+local function stopAimTrainer()
+    if not aimSessionActive then return end
+    aimSessionActive = false
+    destroyCurrentTarget()
+    StartStopBtn.Text = "Start"
+
+    local total = hits + misses
+    if total > 0 then
+        local accuracy = (hits / total) * 100
+        if not bestAccuracy or accuracy > bestAccuracy then
+            bestAccuracy = accuracy
+            BestLabel.Text = string.format("Best accuracy: %d%%", math.floor(bestAccuracy))
+        end
+    end
+end
+
+local function startAimTrainer()
+    if aimSessionActive then return end
+    aimSessionActive = true
+    hits, misses = 0, 0
+    timeLeft = sessionDuration
+    updateStatsLabel()
+    TimeLabel.Text = "Time: "..timeLeft.."s"
+    StartStopBtn.Text = "Stop"
+
+    spawnTarget()
+
+    task.spawn(function()
+        while aimSessionActive and timeLeft > 0 do
+            task.wait(1)
+            if not aimSessionActive then break end
+            timeLeft -= 1
+            TimeLabel.Text = "Time: "..timeLeft.."s"
+        end
+        if aimSessionActive then
+            stopAimTrainer()
+        end
+    end)
+end
+
+-- Qualquer clique que não seja no alvo atual conta como erro
+mouse.Button1Down:Connect(function()
+    if not aimSessionActive then return end
+    local target = mouse.Target
+    if target ~= currentTarget then
+        misses += 1
+        updateStatsLabel()
+    end
+end)
+
+StartStopBtn.MouseButton1Click:Connect(function()
+    if aimSessionActive then
+        stopAimTrainer()
+    else
+        startAimTrainer()
+    end
+end)
+
+------------------------------------------------------------
 -- BOTÃO AUTO SAVE (dentro de Settings)
 ------------------------------------------------------------
 local AutoSaveTrack, AutoSaveKnob = createToggleSwitch(SettingsPage, UDim2.new(1, -64, 0, 55), true, function(enabled)
@@ -907,7 +1055,7 @@ newLabel(ShortcutsPage, "Shortcuts", UDim2.new(0, 160, 0, 20), UDim2.new(0, 44, 
 local Keybinds = {
     Fly       = Enum.KeyCode.F,
     Noclip    = Enum.KeyCode.E,
-    Esp       = Enum.KeyCode.Q,
+    Esp       = Enum.KeyCode.R,
     Invisible = Enum.KeyCode.T,
 }
 
@@ -1023,7 +1171,8 @@ menuButton("Fly", 10, function() showPage("Fly") end)
 menuButton("Noclip", 50, function() showPage("Noclip") end)
 menuButton("Esp", 90, function() showPage("Esp") end)
 menuButton("Invisible", 130, function() showPage("Invisible") end)
-menuButton("Settings", 170, function() showPage("Settings") end)
+menuButton("Aim Trainer", 170, function() showPage("AimTrainer") end)
+menuButton("Settings", 210, function() showPage("Settings") end)
 
 -- Setas de voltar
 backArrow(SettingsPage, function() showPage("Menu") end)
@@ -1033,6 +1182,10 @@ backArrow(NoclipPage, function() showPage("Menu") end)
 backArrow(EspPage, function() showPage("Menu") end)
 backArrow(InvisiblePage, function() showPage("Menu") end)
 backArrow(ShortcutsPage, function() showPage("Settings") end)
+backArrow(AimTrainerPage, function()
+    stopAimTrainer()
+    showPage("Menu")
+end)
 
 ShortcutsBtn.MouseButton1Click:Connect(function()
     showPage("Shortcuts")
@@ -1076,7 +1229,7 @@ end)
 ------------------------------------------------------------
 -- ABRIR / FECHAR / MINIMIZAR (ANIMAÇÕES)
 ------------------------------------------------------------
-local FULL_SIZE = UDim2.new(0, 300, 0, 270)
+local FULL_SIZE = UDim2.new(0, 300, 0, 300)
 local MINI_SIZE = UDim2.new(0, 300, 0, 40)
 
 -- Apaga todo o conteúdo do painel (exceto o ícone de hambúrguer), usado
@@ -1116,6 +1269,7 @@ local function closeGui()
     if State.IsClosed then return end
     State.IsClosed = true
     HamburgerBtn.Rotation = 0
+    stopAimTrainer()
 
     task.spawn(function()
         local step = 0.22

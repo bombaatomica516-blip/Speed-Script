@@ -171,7 +171,7 @@ Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
 Main.ZIndex = 1
 Main.Parent = ScreenGui
-round(Main, 18)
+local mainCorner = round(Main, 18)
 local mainStroke = glass(Main, 0.25)
 
 -- (o código de arrastar a GUI foi movido pra depois da criação do TopBar,
@@ -807,6 +807,37 @@ local function createFlyVfx(root)
     end)
 end
 
+local flyPoseMotors = {} -- [Motor6D] = C0 original, pra restaurar depois
+
+local function findShoulderMotors(char)
+    local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+    if not torso then return nil, nil end
+    local left = torso:FindFirstChild("LeftShoulder") or torso:FindFirstChild("Left Shoulder")
+    local right = torso:FindFirstChild("RightShoulder") or torso:FindFirstChild("Right Shoulder")
+    return left, right
+end
+
+local function applyFlyPose(char)
+    local left, right = findShoulderMotors(char)
+    if left then
+        flyPoseMotors[left] = left.C0
+        tween(left, {C0 = left.C0 * CFrame.Angles(math.rad(-65), 0, math.rad(12))}, 0.35, Enum.EasingStyle.Sine)
+    end
+    if right then
+        flyPoseMotors[right] = right.C0
+        tween(right, {C0 = right.C0 * CFrame.Angles(math.rad(-65), 0, math.rad(-12))}, 0.35, Enum.EasingStyle.Sine)
+    end
+end
+
+local function resetFlyPose()
+    for motor, originalC0 in pairs(flyPoseMotors) do
+        if motor and motor.Parent then
+            tween(motor, {C0 = originalC0}, 0.3, Enum.EasingStyle.Sine)
+        end
+    end
+    flyPoseMotors = {}
+end
+
 local function stopFly()
     if flyConnection then flyConnection:Disconnect(); flyConnection = nil end
     if flyBodyVelocity then flyBodyVelocity:Destroy(); flyBodyVelocity = nil end
@@ -815,6 +846,7 @@ local function stopFly()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then hum.PlatformStand = false end
     destroyFlyVfx()
+    resetFlyPose()
 end
 
 local function startFly()
@@ -826,6 +858,7 @@ local function startFly()
 
     hum.PlatformStand = true
     createFlyVfx(root)
+    applyFlyPose(char)
 
     flyBodyVelocity = Instance.new("BodyVelocity")
     flyBodyVelocity.MaxForce = Vector3.new(1,1,1) * math.huge
@@ -862,7 +895,11 @@ local function startFly()
             moveDir = moveDir.Unit
         end
         flyBodyVelocity.Velocity = moveDir * State.Speed * 3
-        flyBodyGyro.CFrame = camera.CFrame
+
+        -- inclina o corpo pra frente na direção do movimento, dando a
+        -- sensação de "pose de voo" (tipo um moveset genérico de voo)
+        local pitch = moveDir.Magnitude > 0 and math.rad(18) or 0
+        flyBodyGyro.CFrame = camera.CFrame * CFrame.Angles(-pitch, 0, 0)
     end)
 end
 
@@ -1538,7 +1575,6 @@ end)
 ------------------------------------------------------------
 local FULL_SIZE = UDim2.new(0, 300, 0, 300)
 local MINI_SIZE = UDim2.new(0, 300, 0, 40)
-local BIG_LINE_SCALE = 3.5
 
 -- Guarda a transparência "normal" de cada elemento do painel, pra poder
 -- restaurar exatamente como estava ao reabrir (corrige o bug de reabrir
@@ -1605,157 +1641,95 @@ local function fadeShadowIn(duration)
     end
 end
 
--- Calcula, em fração (0 a 1) do tamanho do painel, onde o ícone do
--- hambúrguer está localizado — usado pra fechar/abrir "ao redor" dele
-local function computeIconAnchor()
-    local iconAbsPos = HamburgerBtn.AbsolutePosition + HamburgerBtn.AbsoluteSize / 2
-    local mainAbsPos = Main.AbsolutePosition
-    local mainAbsSize = Main.AbsoluteSize
-    local fx = mainAbsSize.X > 0 and (iconAbsPos.X - mainAbsPos.X) / mainAbsSize.X or 0.5
-    local fy = mainAbsSize.Y > 0 and (iconAbsPos.Y - mainAbsPos.Y) / mainAbsSize.Y or 0.5
-    return Vector2.new(fx, fy), iconAbsPos
+-- Deixa o painel já no "estado fechado" instantaneamente (sem animação),
+-- usado só uma vez, antes da primeira abertura, pra abertura poder ser a
+-- animação de fechamento tocada ao contrário
+local function snapClosedState()
+    Main.AnchorPoint = Vector2.new(0.5, 0.5)
+    Main.Position = UDim2.new(0.5, 0, 0.5, 0)
+    ShadowHolder.AnchorPoint = Vector2.new(0.5, 0.5)
+    ShadowHolder.Position = UDim2.new(0.5, 0, 0.5, 0)
+    Main.Size = UDim2.new(0, 0, 0, 0)
+    mainStroke.Transparency = 1
+    fadeOutContent(0)
+    fadeShadowOut(0)
+
+    local line1Scale = Lines[1]:FindFirstChildOfClass("UIScale")
+    local line3Scale = Lines[3]:FindFirstChildOfClass("UIScale")
+    line1Scale.Scale = 0
+    line3Scale.Scale = 0
+    Lines[1].Position = LineDefaults[2].Position
+    Lines[3].Position = LineDefaults[2].Position
 end
 
-local hasClosedBefore = false
+-- Fecha a GUI: reposiciona as 3 linhas (convergem ao centro), depois
+-- esconde 2 delas (sobra só 1 risco) e então fecha o painel por completo,
+-- até ser reativado pelo Q
+local function closeGui()
+    if State.IsClosed then return end
+    State.IsClosed = true
+    stopAimTrainer()
 
+    task.spawn(function()
+        local line1Scale = Lines[1]:FindFirstChildOfClass("UIScale")
+        local line3Scale = Lines[3]:FindFirstChildOfClass("UIScale")
+
+        -- Passo 1: reposiciona as 3 linhas (convergem pro centro)
+        local centerPos = LineDefaults[2].Position
+        tween(Lines[1], {Position = centerPos}, 0.2)
+        tween(Lines[3], {Position = centerPos}, 0.2)
+        task.wait(0.2)
+
+        -- Passo 2: fecha 2 das linhas, sobrando só 1 risco
+        tween(line1Scale, {Scale = 0}, 0.2)
+        tween(line3Scale, {Scale = 0}, 0.2)
+        task.wait(0.2)
+
+        -- Passo 3: fecha a GUI por completo (só reabre com o Q)
+        fadeOutContent(0.3)
+        fadeShadowOut(0.3)
+        tween(mainStroke, {Transparency = 1}, 0.3)
+        tween(Main, {Size = UDim2.new(0, 0, 0, 0)}, 0.3, Enum.EasingStyle.Quint)
+        task.wait(0.3)
+
+        Main.Visible = false
+        ShadowHolder.Visible = false
+    end)
+end
+
+-- Abre a GUI: exatamente o inverso do fechamento, na ordem contrária
 local function openGui()
     State.IsClosed = false
     Main.Visible = true
     ShadowHolder.Visible = true
+    showPage("Speed")
 
-    if not hasClosedBefore then
-        -- primeira execução: abertura simples, do centro da tela pra fora
-        resetHamburgerLines()
-        HamburgerBtn.Rotation = 0
-        showPage("Speed")
-        Main.AnchorPoint = Vector2.new(0.5, 0.5)
-        Main.Position = UDim2.new(0.5, 0, 0.5, 0)
-        ShadowHolder.AnchorPoint = Vector2.new(0.5, 0.5)
-        ShadowHolder.Position = UDim2.new(0.5, 0, 0.5, 0)
-        Main.Size = UDim2.new(0, 0, 0, 0)
-        Main.BackgroundTransparency = 1
-        mainStroke.Transparency = 1
-        tween(Main, {Size = FULL_SIZE, BackgroundTransparency = 0.25}, 0.35, Enum.EasingStyle.Back)
-        tween(mainStroke, {Transparency = 0.75}, 0.35)
-        return
-    end
-
-    -- reabertura: é o inverso exato da animação de fechamento (que termina
-    -- com o painel encolhido a 0 ao redor do ícone, só a linha 2 visível,
-    -- grande e vertical, e todo o conteúdo apagado), do fim pro começo
     task.spawn(function()
         local line1Scale = Lines[1]:FindFirstChildOfClass("UIScale")
-        local line2Scale = Lines[2]:FindFirstChildOfClass("UIScale")
         local line3Scale = Lines[3]:FindFirstChildOfClass("UIScale")
 
-        -- Passo reverso 1: a linha do meio "nasce" no centro
-        tween(line2Scale, {Scale = BIG_LINE_SCALE}, 0.15, Enum.EasingStyle.Back)
-        task.wait(0.15)
-
-        -- Passo reverso 2: a GUI se abre ao redor das linhas com um slide,
-        -- as outras 2 linhas reaparecem, a sombra volta
-        tween(Main, {Size = FULL_SIZE}, 0.35, Enum.EasingStyle.Quint)
-        tween(line1Scale, {Scale = BIG_LINE_SCALE}, 0.3)
-        tween(line3Scale, {Scale = BIG_LINE_SCALE}, 0.3)
-        fadeShadowIn(0.35)
+        -- Passo reverso 3: a GUI abre por completo
+        tween(Main, {Size = FULL_SIZE}, 0.35, Enum.EasingStyle.Back)
+        fadeShadowIn(0.3)
+        tween(mainStroke, {Transparency = 0.75}, 0.3)
+        fadeInContent(0.3)
         task.wait(0.35)
 
-        -- Passo reverso 3: as 3 linhas (verticais, grandes) se separam do
-        -- centro de volta pras posições originais
-        tween(Lines[1], {Position = LineDefaults[1].Position}, 0.25)
-        tween(Lines[3], {Position = LineDefaults[3].Position}, 0.25)
-        task.wait(0.25)
-
-        -- Passo reverso 4: as linhas encolhem de volta ao tamanho normal
-        tween(line1Scale, {Scale = 1}, 0.25)
-        tween(line2Scale, {Scale = 1}, 0.25)
-        tween(line3Scale, {Scale = 1}, 0.25)
-        task.wait(0.25)
-
-        -- Passo reverso 5: as linhas giram de volta pra horizontal
-        tween(Lines[1], {Rotation = 0}, 0.2)
-        tween(Lines[2], {Rotation = 0}, 0.2)
-        tween(Lines[3], {Rotation = 0}, 0.2)
+        -- Passo reverso 2: as 2 linhas escondidas reaparecem
+        tween(line1Scale, {Scale = 1}, 0.2)
+        tween(line3Scale, {Scale = 1}, 0.2)
         task.wait(0.2)
 
-        -- Passo reverso 6: todo o conteúdo do painel reaparece
-        fadeInContent(0.25)
-        tween(mainStroke, {Transparency = 0.75}, 0.25)
-        task.wait(0.25)
-
-        -- volta o painel pro esquema normal de âncora central (sem pulo
-        -- visual), pra arrastar/minimizar continuarem funcionando normal
-        local curAbsPos = Main.AbsolutePosition
-        local curAbsSize = Main.AbsoluteSize
-        local centerAbs = curAbsPos + curAbsSize / 2
-        Main.AnchorPoint = Vector2.new(0.5, 0.5)
-        Main.Position = UDim2.new(0, centerAbs.X, 0, centerAbs.Y)
-        ShadowHolder.AnchorPoint = Vector2.new(0.5, 0.5)
-        ShadowHolder.Position = Main.Position
-
-        resetHamburgerLines()
-        HamburgerBtn.Rotation = 0
-        showPage("Speed")
+        -- Passo reverso 1: as 3 linhas voltam pras posições originais
+        tween(Lines[1], {Position = LineDefaults[1].Position}, 0.2)
+        tween(Lines[3], {Position = LineDefaults[3].Position}, 0.2)
+        task.wait(0.2)
     end)
 end
 
-local function closeGui()
-    if State.IsClosed then return end
-    State.IsClosed = true
-    HamburgerBtn.Rotation = 0
-    stopAimTrainer()
-
-    task.spawn(function()
-        -- Passo 1: toda a GUI (conteúdo) some primeiro
-        fadeOutContent(0.22)
-        tween(mainStroke, {Transparency = 1}, 0.22)
-        task.wait(0.22)
-
-        -- Passo 2: as 3 linhas giram pra vertical
-        tween(Lines[1], {Rotation = 90}, 0.2)
-        tween(Lines[2], {Rotation = 90}, 0.2)
-        tween(Lines[3], {Rotation = 90}, 0.2)
-        task.wait(0.2)
-
-        -- Passo 3: as 3 linhas aumentam bastante de tamanho
-        local line1Scale = Lines[1]:FindFirstChildOfClass("UIScale")
-        local line2Scale = Lines[2]:FindFirstChildOfClass("UIScale")
-        local line3Scale = Lines[3]:FindFirstChildOfClass("UIScale")
-        tween(line1Scale, {Scale = BIG_LINE_SCALE}, 0.25)
-        tween(line2Scale, {Scale = BIG_LINE_SCALE}, 0.25)
-        tween(line3Scale, {Scale = BIG_LINE_SCALE}, 0.25)
-        task.wait(0.25)
-
-        -- Passo 4: as 3 linhas convergem pro centro
-        local centerPos = LineDefaults[2].Position
-        tween(Lines[1], {Position = centerPos}, 0.25)
-        tween(Lines[3], {Position = centerPos}, 0.25)
-        task.wait(0.25)
-
-        -- Passo 5: a GUI se fecha ao redor das linhas com um slide,
-        -- sobrando só a linha do meio
-        local anchorFrac, iconAbsPos = computeIconAnchor()
-        Main.AnchorPoint = anchorFrac
-        Main.Position = UDim2.new(0, iconAbsPos.X, 0, iconAbsPos.Y)
-        ShadowHolder.AnchorPoint = anchorFrac
-        ShadowHolder.Position = Main.Position
-
-        tween(Main, {Size = UDim2.new(0, 0, 0, 0)}, 0.35, Enum.EasingStyle.Quint)
-        fadeShadowOut(0.3)
-        tween(line1Scale, {Scale = 0}, 0.3)
-        tween(line3Scale, {Scale = 0}, 0.3)
-        task.wait(0.35)
-
-        -- Passo 6: a última linha vai ao centro e a GUI fecha de vez
-        tween(line2Scale, {Scale = 0}, 0.15)
-        task.wait(0.15)
-
-        Main.Visible = false
-        ShadowHolder.Visible = false
-        hasClosedBefore = true
-    end)
-end
-
+-- Deixa tudo pronto no "estado fechado" antes da primeiríssima abertura,
+-- pra ela já tocar a animação de abrir (o inverso do fechamento)
+snapClosedState()
 captureDefaults()
 
 CloseBtn.MouseButton1Click:Connect(closeGui)
@@ -1764,11 +1738,15 @@ MinimizeBtn.MouseButton1Click:Connect(function()
     State.IsMinimized = not State.IsMinimized
     if State.IsMinimized then
         tween(Main, {Size = MINI_SIZE}, 0.3)
+        tween(ShadowHolder, {Size = UDim2.new(0, 300, 0, 40)}, 0.3)
+        tween(mainCorner, {CornerRadius = UDim.new(0, 0)}, 0.3)
         tween(Content, {BackgroundTransparency = 1}, 0.15)
         Content.Visible = false
     else
         Content.Visible = true
         tween(Main, {Size = FULL_SIZE}, 0.3)
+        tween(ShadowHolder, {Size = UDim2.new(0, 300, 0, 300)}, 0.3)
+        tween(mainCorner, {CornerRadius = UDim.new(0, 18)}, 0.3)
     end
 end)
 

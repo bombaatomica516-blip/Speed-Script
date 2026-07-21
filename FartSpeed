@@ -36,14 +36,24 @@ if oldBlur then oldBlur:Destroy() end
 -- CONFIGURAÇÃO / TEMAS
 ------------------------------------------------------------
 local Themes = {
-    Dark   = {Main = Color3.fromRGB(38, 38, 40),  Accent = Color3.fromRGB(88, 121, 255), Text = Color3.fromRGB(235,235,240)},
-    Purple = {Main = Color3.fromRGB(26, 20, 32),  Accent = Color3.fromRGB(168, 85, 247), Text = Color3.fromRGB(240,235,245)},
-    Blue   = {Main = Color3.fromRGB(16, 24, 34),  Accent = Color3.fromRGB(56, 189, 248), Text = Color3.fromRGB(230,240,245)},
-    Green  = {Main = Color3.fromRGB(18, 26, 22),  Accent = Color3.fromRGB(74, 222, 128), Text = Color3.fromRGB(230,245,235)},
+    Black = {Main = Color3.fromRGB(38, 38, 40),  Accent = Color3.fromRGB(88, 121, 255), Text = Color3.fromRGB(235,235,240)},
+    White = {Main = Color3.fromRGB(235, 235, 238), Accent = Color3.fromRGB(60, 110, 240), Text = Color3.fromRGB(30, 30, 35)},
+
+    -- "Customized": paletas originais com clima inspirado em anime,
+    -- sem usar nomes, logos ou artes de obras reais
+    ["Crimson Fang"] = {Main = Color3.fromRGB(36, 20, 20), Accent = Color3.fromRGB(224, 64, 64),  Text = Color3.fromRGB(245, 230, 230)},
+    ["Ocean Spirit"] = {Main = Color3.fromRGB(15, 25, 40), Accent = Color3.fromRGB(80, 180, 255), Text = Color3.fromRGB(230, 240, 250)},
+    ["Golden Order"] = {Main = Color3.fromRGB(32, 26, 15), Accent = Color3.fromRGB(255, 200, 60), Text = Color3.fromRGB(250, 245, 230)},
+    ["Shadow Veil"]  = {Main = Color3.fromRGB(25, 18, 32), Accent = Color3.fromRGB(170, 90, 255), Text = Color3.fromRGB(240, 232, 250)},
+}
+
+local ThemeCategories = {
+    Common = {"Black", "White"},
+    Customized = {"Crimson Fang", "Ocean Spirit", "Golden Order", "Shadow Veil"},
 }
 
 local State = {
-    CurrentTheme   = "Dark",
+    CurrentTheme   = "Black",
     AutoSave       = true,
     Speed          = 16,
     MinSpeed       = 16,
@@ -164,7 +174,20 @@ Main.Parent = ScreenGui
 round(Main, 18)
 local mainStroke = glass(Main, 0.25)
 
--- Arrastar a GUI pela barra superior
+-- (o código de arrastar a GUI foi movido pra depois da criação do TopBar,
+-- já que precisa ficar restrito só à barra superior)
+
+------------------------------------------------------------
+-- TOP BAR
+------------------------------------------------------------
+local TopBar = Instance.new("Frame")
+TopBar.Name = "TopBar"
+TopBar.Size = UDim2.new(1, 0, 0, 40)
+TopBar.BackgroundTransparency = 1
+TopBar.Parent = Main
+
+-- Arrastar a GUI, restrito só à barra superior (assim o slider de
+-- velocidade não puxa mais a GUI junto quando arrastado)
 do
     local dragging = false
     local dragInput, dragStart, startPos
@@ -187,13 +210,13 @@ do
         end)
     end
 
-    Main.InputBegan:Connect(function(input)
+    TopBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             beginDrag(input)
         end
     end)
 
-    Main.InputChanged:Connect(function(input)
+    TopBar.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
             dragInput = input
         end
@@ -205,15 +228,6 @@ do
         end
     end)
 end
-
-------------------------------------------------------------
--- TOP BAR
-------------------------------------------------------------
-local TopBar = Instance.new("Frame")
-TopBar.Name = "TopBar"
-TopBar.Size = UDim2.new(1, 0, 0, 40)
-TopBar.BackgroundTransparency = 1
-TopBar.Parent = Main
 
 -- Botão hambúrguer (3 traços)
 local HamburgerBtn = Instance.new("TextButton")
@@ -378,8 +392,8 @@ local SpeedColon = newLabel(SpeedPage, ":", UDim2.new(0, 20, 0, 20), UDim2.new(0
 local SpeedValue = newLabel(SpeedPage, tostring(State.Speed), UDim2.new(0, 60, 0, 20), UDim2.new(0, 90, 0, 48), 16, false)
 
 -- Relógio (canto inferior direito)
-local ClockLabel = newLabel(SpeedPage, "--:--", UDim2.new(0, 80, 0, 16), UDim2.new(1, -90, 1, -26), 12, false, Enum.TextXAlignment.Right)
-ClockLabel.TextTransparency = 0.35
+local ClockLabel = newLabel(SpeedPage, "--:--", UDim2.new(0, 100, 0, 26), UDim2.new(1, -110, 1, -34), 20, true, Enum.TextXAlignment.Right)
+ClockLabel.TextTransparency = 0.2
 
 local function updateSpeedValueLabel(v)
     SpeedValue.Text = tostring(math.floor(v))
@@ -505,41 +519,204 @@ round(ShortcutsBtn, 10)
 local ThemesPage = newPage("Themes", false)
 newLabel(ThemesPage, "Themes", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
 
-local themeOrder = {"Dark", "Purple", "Blue", "Green"}
+-- Registro de todos os toggles criados (preenchido por createToggleSwitch,
+-- definida mais abaixo no arquivo) — permite que applyTheme atualize a cor
+-- de qualquer toggle que esteja ligado no momento da troca de tema
+local ToggleRegistry = {}
+local StartStopBtn -- forward-declarado; a instância real é criada na seção do Aim Trainer
+
+-- Muda o tema visual da GUI inteira (cores/tema), sem NUNCA mexer na
+-- transparência do painel (que fica sempre travada em 25%), com uma
+-- animação suave de transição entre o tema anterior e o novo
 local function applyTheme(name)
     State.CurrentTheme = name
     local t = Themes[name]
-    tween(Main, {BackgroundColor3 = t.Main}, 0.3)
-    tween(SliderFill, {BackgroundColor3 = t.Accent}, 0.3)
-    tween(knobStroke, {Color = t.Accent}, 0.3)
+
+    tween(Main, {BackgroundColor3 = t.Main}, 0.35)
+    tween(SliderFill, {BackgroundColor3 = t.Accent}, 0.35)
+    tween(knobStroke, {Color = t.Accent}, 0.35)
+
     for _, obj in ipairs(ScreenGui:GetDescendants()) do
-        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-            if obj.Name ~= "CloseBtn" then
-                tween(obj, {TextColor3 = t.Text}, 0.3)
-            end
+        if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.Name ~= "CloseBtn" then
+            tween(obj, {TextColor3 = t.Text}, 0.35)
         end
         if obj.Name:match("^Line%d") then
-            tween(obj, {BackgroundColor3 = t.Text}, 0.3)
+            tween(obj, {BackgroundColor3 = t.Text}, 0.35)
         end
+    end
+
+    -- atualiza qualquer toggle que esteja ligado agora, pra refletir a
+    -- cor de destaque do novo tema
+    for _, entry in ipairs(ToggleRegistry) do
+        if entry.IsEnabled() then
+            tween(entry.Track, {BackgroundColor3 = t.Accent}, 0.35)
+        end
+    end
+
+    if StartStopBtn then
+        tween(StartStopBtn, {BackgroundColor3 = t.Accent}, 0.35)
     end
 end
 
-for i, themeName in ipairs(themeOrder) do
-    local swatch = Instance.new("TextButton")
-    swatch.Size = UDim2.new(0, 60, 0, 60)
-    swatch.Position = UDim2.new(0, 20 + (i-1)*66, 0, 50)
-    swatch.BackgroundColor3 = Themes[themeName].Accent
-    swatch.Text = themeName
-    swatch.TextColor3 = Color3.fromRGB(255,255,255)
-    swatch.TextSize = 11
-    swatch.Font = Enum.Font.GothamBold
-    swatch.TextYAlignment = Enum.TextYAlignment.Bottom
-    swatch.Parent = ThemesPage
-    round(swatch, 12)
-    swatch.MouseButton1Click:Connect(function()
+-- Gera um preview visual pequeno e diferente pra cada card de tema, pra
+-- não ficar tudo igual (sem usar imagens de obras protegidas — são só
+-- formas geométricas geradas com as próprias cores do tema)
+local function createThemePreview(parent, themeName, style)
+    local theme = Themes[themeName]
+
+    local preview = Instance.new("Frame")
+    preview.Size = UDim2.new(0, 76, 0, 46)
+    preview.BackgroundColor3 = theme.Main
+    preview.BorderSizePixel = 0
+    preview.ClipsDescendants = true
+    preview.Parent = parent
+    round(preview, 10)
+
+    if style == "diagonal" then
+        local band = Instance.new("Frame")
+        band.Size = UDim2.new(1.6, 0, 0.9, 0)
+        band.AnchorPoint = Vector2.new(0.5, 0.5)
+        band.Position = UDim2.new(0.5, 0, 0.5, 0)
+        band.Rotation = 35
+        band.BackgroundColor3 = theme.Accent
+        band.BorderSizePixel = 0
+        band.Parent = preview
+    elseif style == "corner" then
+        local corner = Instance.new("Frame")
+        corner.Size = UDim2.new(0.9, 0, 0.9, 0)
+        corner.AnchorPoint = Vector2.new(1, 1)
+        corner.Position = UDim2.new(1, 6, 1, 6)
+        corner.Rotation = 45
+        corner.BackgroundColor3 = theme.Accent
+        corner.BorderSizePixel = 0
+        corner.Parent = preview
+    elseif style == "glow" then
+        local glow = Instance.new("Frame")
+        glow.Size = UDim2.new(0, 44, 0, 44)
+        glow.AnchorPoint = Vector2.new(0.5, 0.5)
+        glow.Position = UDim2.new(0.5, 0, 0.5, 0)
+        glow.BackgroundColor3 = theme.Accent
+        glow.BackgroundTransparency = 0.1
+        glow.BorderSizePixel = 0
+        glow.Parent = preview
+        circle(glow)
+    elseif style == "stripes" then
+        for s = 1, 3 do
+            local stripe = Instance.new("Frame")
+            stripe.Size = UDim2.new(0, 12, 2, 0)
+            stripe.Position = UDim2.new(0, (s * 22) - 14, -0.5, 0)
+            stripe.Rotation = 18
+            stripe.BackgroundColor3 = theme.Accent
+            stripe.BorderSizePixel = 0
+            stripe.Parent = preview
+        end
+    end
+
+    return preview
+end
+
+local function createThemeCard(parent, themeName, position, style)
+    local card = Instance.new("TextButton")
+    card.Size = UDim2.new(0, 90, 0, 82)
+    card.Position = position
+    card.BackgroundTransparency = 1
+    card.Text = ""
+    card.Parent = parent
+
+    local preview = createThemePreview(card, themeName, style)
+    preview.AnchorPoint = Vector2.new(0.5, 0)
+    preview.Position = UDim2.new(0.5, 0, 0, 0)
+
+    newLabel(card, themeName, UDim2.new(1, 0, 0, 20), UDim2.new(0, 0, 0, 50), 12, true, Enum.TextXAlignment.Center)
+
+    card.MouseButton1Click:Connect(function()
         applyTheme(themeName)
     end)
+
+    return card
 end
+
+-- Subtítulo "Categories" + seletor colapsável (fechado por padrão, "...")
+newLabel(ThemesPage, "Categories", UDim2.new(0, 160, 0, 18), UDim2.new(0, 20, 0, 46), 13, true)
+
+local CategorySelector = Instance.new("TextButton")
+CategorySelector.Size = UDim2.new(1, -40, 0, 34)
+CategorySelector.Position = UDim2.new(0, 20, 0, 68)
+CategorySelector.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+CategorySelector.BackgroundTransparency = 0.9
+CategorySelector.Text = ""
+CategorySelector.Parent = ThemesPage
+round(CategorySelector, 10)
+
+newLabel(CategorySelector, "...", UDim2.new(0, 60, 1, 0), UDim2.new(0, 14, 0, 0), 16, true)
+
+local CategoryArrow = Instance.new("TextLabel")
+CategoryArrow.Size = UDim2.new(0, 20, 0, 20)
+CategoryArrow.Position = UDim2.new(1, -32, 0.5, -10)
+CategoryArrow.BackgroundTransparency = 1
+CategoryArrow.Text = "▼"
+CategoryArrow.TextColor3 = Themes[State.CurrentTheme].Text
+CategoryArrow.Font = Enum.Font.GothamBold
+CategoryArrow.TextSize = 12
+CategoryArrow.Parent = CategorySelector
+
+local CategoryOptions = Instance.new("Frame")
+CategoryOptions.Size = UDim2.new(1, -40, 0, 0)
+CategoryOptions.Position = UDim2.new(0, 20, 0, 106)
+CategoryOptions.BackgroundTransparency = 1
+CategoryOptions.ClipsDescendants = true
+CategoryOptions.Parent = ThemesPage
+
+local CommonCategoryBtn = Instance.new("TextButton")
+CommonCategoryBtn.Size = UDim2.new(1, 0, 0, 34)
+CommonCategoryBtn.Position = UDim2.new(0, 0, 0, 0)
+CommonCategoryBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+CommonCategoryBtn.BackgroundTransparency = 0.9
+CommonCategoryBtn.Text = "Common"
+CommonCategoryBtn.TextColor3 = Themes[State.CurrentTheme].Text
+CommonCategoryBtn.Font = Enum.Font.GothamMedium
+CommonCategoryBtn.TextSize = 14
+CommonCategoryBtn.Parent = CategoryOptions
+round(CommonCategoryBtn, 10)
+
+local CustomCategoryBtn = Instance.new("TextButton")
+CustomCategoryBtn.Size = UDim2.new(1, 0, 0, 34)
+CustomCategoryBtn.Position = UDim2.new(0, 0, 0, 40)
+CustomCategoryBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+CustomCategoryBtn.BackgroundTransparency = 0.9
+CustomCategoryBtn.Text = "Customized"
+CustomCategoryBtn.TextColor3 = Themes[State.CurrentTheme].Text
+CustomCategoryBtn.Font = Enum.Font.GothamMedium
+CustomCategoryBtn.TextSize = 14
+CustomCategoryBtn.Parent = CategoryOptions
+round(CustomCategoryBtn, 10)
+
+local categoryExpanded = false
+CategorySelector.MouseButton1Click:Connect(function()
+    categoryExpanded = not categoryExpanded
+    tween(CategoryArrow, {Rotation = categoryExpanded and 180 or 0}, 0.2)
+    tween(CategoryOptions, {Size = categoryExpanded and UDim2.new(1, -40, 0, 80) or UDim2.new(1, -40, 0, 0)}, 0.25, Enum.EasingStyle.Quad)
+end)
+
+------------------------------------------------------------
+-- PÁGINA: THEMES > COMMON (tema Preto e Branco)
+------------------------------------------------------------
+local ThemesCommonPage = newPage("ThemesCommon", false)
+newLabel(ThemesCommonPage, "Common", UDim2.new(0, 160, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+
+createThemeCard(ThemesCommonPage, "Black", UDim2.new(0, 24, 0, 55), "glow")
+createThemeCard(ThemesCommonPage, "White", UDim2.new(0, 130, 0, 55), "corner")
+
+------------------------------------------------------------
+-- PÁGINA: THEMES > CUSTOMIZED (paletas originais, clima de anime)
+------------------------------------------------------------
+local ThemesCustomPage = newPage("ThemesCustom", false)
+newLabel(ThemesCustomPage, "Customized", UDim2.new(0, 160, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
+
+createThemeCard(ThemesCustomPage, "Crimson Fang", UDim2.new(0, 24, 0, 55), "diagonal")
+createThemeCard(ThemesCustomPage, "Ocean Spirit", UDim2.new(0, 130, 0, 55), "stripes")
+createThemeCard(ThemesCustomPage, "Golden Order", UDim2.new(0, 24, 0, 150), "glow")
+createThemeCard(ThemesCustomPage, "Shadow Veil", UDim2.new(0, 130, 0, 150), "corner")
 
 ------------------------------------------------------------
 -- PÁGINA: FLY
@@ -551,6 +728,85 @@ newLabel(FlyPage, "Enable fly", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55
 local flyBodyVelocity, flyBodyGyro
 local flyConnection
 
+local flyVfxAttachment0, flyVfxAttachment1, flyVfxTrail, flyVfxParticles, flyVfxLight
+local defaultCameraFOV = 70
+
+local function destroyFlyVfx()
+    if flyVfxTrail then flyVfxTrail:Destroy(); flyVfxTrail = nil end
+    if flyVfxParticles then flyVfxParticles:Destroy(); flyVfxParticles = nil end
+    if flyVfxLight then flyVfxLight:Destroy(); flyVfxLight = nil end
+    if flyVfxAttachment0 then flyVfxAttachment0:Destroy(); flyVfxAttachment0 = nil end
+    if flyVfxAttachment1 then flyVfxAttachment1:Destroy(); flyVfxAttachment1 = nil end
+    local camera = workspace.CurrentCamera
+    if camera then
+        tween(camera, {FieldOfView = defaultCameraFOV}, 0.4)
+    end
+end
+
+local function createFlyVfx(root)
+    local accent = Themes[State.CurrentTheme].Accent
+
+    flyVfxAttachment0 = Instance.new("Attachment")
+    flyVfxAttachment0.Position = Vector3.new(0, -1.4, 0.6)
+    flyVfxAttachment0.Parent = root
+
+    flyVfxAttachment1 = Instance.new("Attachment")
+    flyVfxAttachment1.Position = Vector3.new(0, -1.4, -0.6)
+    flyVfxAttachment1.Parent = root
+
+    -- trilha de energia atrás do personagem
+    flyVfxTrail = Instance.new("Trail")
+    flyVfxTrail.Attachment0 = flyVfxAttachment0
+    flyVfxTrail.Attachment1 = flyVfxAttachment1
+    flyVfxTrail.Lifetime = 0.35
+    flyVfxTrail.MinLength = 0
+    flyVfxTrail.WidthScale = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    flyVfxTrail.Color = ColorSequence.new(accent)
+    flyVfxTrail.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.2),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    flyVfxTrail.Parent = root
+
+    -- partículas de energia soltando enquanto voa
+    flyVfxParticles = Instance.new("ParticleEmitter")
+    flyVfxParticles.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    flyVfxParticles.Color = ColorSequence.new(accent)
+    flyVfxParticles.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.6),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    flyVfxParticles.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.3),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    flyVfxParticles.Lifetime = NumberRange.new(0.3, 0.6)
+    flyVfxParticles.Rate = 40
+    flyVfxParticles.Speed = NumberRange.new(2, 4)
+    flyVfxParticles.SpreadAngle = Vector2.new(180, 180)
+    flyVfxParticles.Parent = root
+
+    -- brilho pulsante ao redor do personagem
+    flyVfxLight = Instance.new("PointLight")
+    flyVfxLight.Color = accent
+    flyVfxLight.Range = 14
+    flyVfxLight.Brightness = 2
+    flyVfxLight.Parent = root
+
+    task.spawn(function()
+        while flyVfxLight and flyVfxLight.Parent do
+            tween(flyVfxLight, {Brightness = 4}, 0.5, Enum.EasingStyle.Sine)
+            task.wait(0.5)
+            if not (flyVfxLight and flyVfxLight.Parent) then break end
+            tween(flyVfxLight, {Brightness = 1.5}, 0.5, Enum.EasingStyle.Sine)
+            task.wait(0.5)
+        end
+    end)
+end
+
 local function stopFly()
     if flyConnection then flyConnection:Disconnect(); flyConnection = nil end
     if flyBodyVelocity then flyBodyVelocity:Destroy(); flyBodyVelocity = nil end
@@ -558,6 +814,7 @@ local function stopFly()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then hum.PlatformStand = false end
+    destroyFlyVfx()
 end
 
 local function startFly()
@@ -568,6 +825,7 @@ local function startFly()
     if not root or not hum then return end
 
     hum.PlatformStand = true
+    createFlyVfx(root)
 
     flyBodyVelocity = Instance.new("BodyVelocity")
     flyBodyVelocity.MaxForce = Vector3.new(1,1,1) * math.huge
@@ -589,6 +847,16 @@ local function startFly()
         if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir += camera.CFrame.RightVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir += Vector3.new(0,1,0) end
         if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir += Vector3.new(0,-1,0) end
+
+        -- leve zoom na câmera quando está voando em alta velocidade (sensação de impulso)
+        local targetFOV = moveDir.Magnitude > 0 and (defaultCameraFOV + 6) or defaultCameraFOV
+        if math.abs(camera.FieldOfView - targetFOV) > 0.5 then
+            tween(camera, {FieldOfView = targetFOV}, 0.3)
+        end
+
+        if flyVfxParticles then
+            flyVfxParticles.Enabled = moveDir.Magnitude > 0
+        end
 
         if moveDir.Magnitude > 0 then
             moveDir = moveDir.Unit
@@ -649,6 +917,8 @@ local function createToggleSwitch(parent, position, default, onChange)
         setEnabled(not enabled)
     end)
 
+    table.insert(ToggleRegistry, {Track = track, IsEnabled = function() return enabled end})
+
     return track, knob, setEnabled
 end
 
@@ -701,6 +971,23 @@ local ESP_SPEED_THRESHOLD = 40 -- acima disso, marca como suspeito
 local EspPage = newPage("Esp", false)
 newLabel(EspPage, "Esp", UDim2.new(0, 120, 0, 20), UDim2.new(0, 44, 0, 10), 15, true)
 newLabel(EspPage, "Enable esp", UDim2.new(0, 120, 0, 20), UDim2.new(0, 20, 0, 55), 14, false)
+
+local FpsLabel = newLabel(EspPage, "FPS: --", UDim2.new(1, -40, 0, 18), UDim2.new(0, 20, 0, 88), 12, false)
+FpsLabel.TextTransparency = 0.3
+
+do
+    local frameCount = 0
+    local elapsed = 0
+    RunService.Heartbeat:Connect(function(dt)
+        frameCount += 1
+        elapsed += dt
+        if elapsed >= 1 then
+            FpsLabel.Text = string.format("FPS: %d", frameCount)
+            frameCount = 0
+            elapsed = 0
+        end
+    end)
+end
 
 local espEntries = {} -- [char] = {Highlight=, Billboard=, NameLabel=, InfoLabel=, Player=}
 local espUpdateConn
@@ -859,13 +1146,13 @@ local function setInvisible(enabled)
         for _, part in ipairs(char:GetDescendants()) do
             if part:IsA("BasePart") or part:IsA("Decal") then
                 originalTransparency[part] = part.Transparency
-                part.Transparency = 1
+                tween(part, {Transparency = 1}, 0.8, Enum.EasingStyle.Sine)
             end
         end
     else
         for part, t in pairs(originalTransparency) do
             if part and part.Parent then
-                part.Transparency = t
+                tween(part, {Transparency = t}, 0.8, Enum.EasingStyle.Sine)
             end
         end
         originalTransparency = {}
@@ -889,7 +1176,7 @@ local TimeLabel = newLabel(AimTrainerPage, "Time: 30s", UDim2.new(1, -40, 0, 20)
 local BestLabel = newLabel(AimTrainerPage, "Best accuracy: --", UDim2.new(1, -40, 0, 20), UDim2.new(0, 20, 0, 98), 12, false)
 BestLabel.TextTransparency = 0.35
 
-local StartStopBtn = Instance.new("TextButton")
+StartStopBtn = Instance.new("TextButton")
 StartStopBtn.Size = UDim2.new(1, -40, 0, 36)
 StartStopBtn.Position = UDim2.new(0, 20, 0, 135)
 StartStopBtn.BackgroundColor3 = Themes[State.CurrentTheme].Accent
@@ -1045,6 +1332,16 @@ ThemesBtn.TextSize = 15
 ThemesBtn.Parent = SettingsPage
 round(ThemesBtn, 10)
 
+local ThemesBtnArrow = Instance.new("TextLabel")
+ThemesBtnArrow.Size = UDim2.new(0, 20, 0, 20)
+ThemesBtnArrow.Position = UDim2.new(1, -30, 0.5, -10)
+ThemesBtnArrow.BackgroundTransparency = 1
+ThemesBtnArrow.Text = "▼"
+ThemesBtnArrow.TextColor3 = Themes[State.CurrentTheme].Text
+ThemesBtnArrow.Font = Enum.Font.GothamBold
+ThemesBtnArrow.TextSize = 12
+ThemesBtnArrow.Parent = ThemesBtn
+
 ------------------------------------------------------------
 -- PÁGINA: SHORTCUTS (atalhos personalizáveis)
 ------------------------------------------------------------
@@ -1177,6 +1474,16 @@ menuButton("Settings", 210, function() showPage("Settings") end)
 -- Setas de voltar
 backArrow(SettingsPage, function() showPage("Menu") end)
 backArrow(ThemesPage, function() showPage("Settings") end)
+backArrow(ThemesCommonPage, function() showPage("Themes") end)
+backArrow(ThemesCustomPage, function() showPage("Themes") end)
+
+CommonCategoryBtn.MouseButton1Click:Connect(function()
+    showPage("ThemesCommon")
+end)
+
+CustomCategoryBtn.MouseButton1Click:Connect(function()
+    showPage("ThemesCustom")
+end)
 backArrow(FlyPage, function() showPage("Menu") end)
 backArrow(NoclipPage, function() showPage("Menu") end)
 backArrow(EspPage, function() showPage("Menu") end)
@@ -1231,38 +1538,165 @@ end)
 ------------------------------------------------------------
 local FULL_SIZE = UDim2.new(0, 300, 0, 300)
 local MINI_SIZE = UDim2.new(0, 300, 0, 40)
+local BIG_LINE_SCALE = 3.5
 
--- Apaga todo o conteúdo do painel (exceto o ícone de hambúrguer), usado
--- durante a sequência de fechamento
-local function fadeOutContent(duration)
+-- Guarda a transparência "normal" de cada elemento do painel, pra poder
+-- restaurar exatamente como estava ao reabrir (corrige o bug de reabrir
+-- e a GUI aparecer sem nada dentro)
+local ContentDefaults = {}
+local ShadowDefaults = {}
+
+local function captureDefaults()
     for _, obj in ipairs(Main:GetDescendants()) do
         if obj ~= HamburgerBtn and not obj:IsDescendantOf(HamburgerBtn) then
             if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-                tween(obj, {TextTransparency = 1, BackgroundTransparency = 1}, duration)
-            elseif obj:IsA("Frame") and obj ~= TopBar then
-                tween(obj, {BackgroundTransparency = 1}, duration)
+                ContentDefaults[obj] = {Text = obj.TextTransparency, Background = obj.BackgroundTransparency}
             elseif obj:IsA("UIStroke") then
+                ContentDefaults[obj] = {Stroke = obj.Transparency}
+            elseif obj:IsA("Frame") and obj ~= TopBar then
+                ContentDefaults[obj] = {Background = obj.BackgroundTransparency}
+            end
+        end
+    end
+    for _, layer in ipairs(ShadowHolder:GetChildren()) do
+        if layer:IsA("Frame") then
+            ShadowDefaults[layer] = layer.BackgroundTransparency
+        end
+    end
+end
+
+local function fadeOutContent(duration)
+    for obj, defaults in pairs(ContentDefaults) do
+        if obj and obj.Parent then
+            if defaults.Text ~= nil then
+                tween(obj, {TextTransparency = 1, BackgroundTransparency = 1}, duration)
+            elseif defaults.Stroke ~= nil then
                 tween(obj, {Transparency = 1}, duration)
+            else
+                tween(obj, {BackgroundTransparency = 1}, duration)
             end
         end
     end
 end
 
+local function fadeInContent(duration)
+    for obj, defaults in pairs(ContentDefaults) do
+        if obj and obj.Parent then
+            if defaults.Text ~= nil then
+                tween(obj, {TextTransparency = defaults.Text, BackgroundTransparency = defaults.Background}, duration)
+            elseif defaults.Stroke ~= nil then
+                tween(obj, {Transparency = defaults.Stroke}, duration)
+            else
+                tween(obj, {BackgroundTransparency = defaults.Background}, duration)
+            end
+        end
+    end
+end
+
+local function fadeShadowOut(duration)
+    for layer in pairs(ShadowDefaults) do
+        tween(layer, {BackgroundTransparency = 1}, duration)
+    end
+end
+
+local function fadeShadowIn(duration)
+    for layer, defaultT in pairs(ShadowDefaults) do
+        tween(layer, {BackgroundTransparency = defaultT}, duration)
+    end
+end
+
+-- Calcula, em fração (0 a 1) do tamanho do painel, onde o ícone do
+-- hambúrguer está localizado — usado pra fechar/abrir "ao redor" dele
+local function computeIconAnchor()
+    local iconAbsPos = HamburgerBtn.AbsolutePosition + HamburgerBtn.AbsoluteSize / 2
+    local mainAbsPos = Main.AbsolutePosition
+    local mainAbsSize = Main.AbsoluteSize
+    local fx = mainAbsSize.X > 0 and (iconAbsPos.X - mainAbsPos.X) / mainAbsSize.X or 0.5
+    local fy = mainAbsSize.Y > 0 and (iconAbsPos.Y - mainAbsPos.Y) / mainAbsSize.Y or 0.5
+    return Vector2.new(fx, fy), iconAbsPos
+end
+
+local hasClosedBefore = false
+
 local function openGui()
     State.IsClosed = false
-
-    -- reseta o ícone do hambúrguer e o conteúdo antes de abrir
-    resetHamburgerLines()
-    HamburgerBtn.Rotation = 0
-    showPage("Speed")
-
     Main.Visible = true
     ShadowHolder.Visible = true
-    Main.Size = UDim2.new(0, 0, 0, 0)
-    Main.BackgroundTransparency = 1
-    mainStroke.Transparency = 1
-    tween(Main, {Size = FULL_SIZE, BackgroundTransparency = 0.25}, 0.35, Enum.EasingStyle.Back)
-    tween(mainStroke, {Transparency = 0.75}, 0.35)
+
+    if not hasClosedBefore then
+        -- primeira execução: abertura simples, do centro da tela pra fora
+        resetHamburgerLines()
+        HamburgerBtn.Rotation = 0
+        showPage("Speed")
+        Main.AnchorPoint = Vector2.new(0.5, 0.5)
+        Main.Position = UDim2.new(0.5, 0, 0.5, 0)
+        ShadowHolder.AnchorPoint = Vector2.new(0.5, 0.5)
+        ShadowHolder.Position = UDim2.new(0.5, 0, 0.5, 0)
+        Main.Size = UDim2.new(0, 0, 0, 0)
+        Main.BackgroundTransparency = 1
+        mainStroke.Transparency = 1
+        tween(Main, {Size = FULL_SIZE, BackgroundTransparency = 0.25}, 0.35, Enum.EasingStyle.Back)
+        tween(mainStroke, {Transparency = 0.75}, 0.35)
+        return
+    end
+
+    -- reabertura: é o inverso exato da animação de fechamento (que termina
+    -- com o painel encolhido a 0 ao redor do ícone, só a linha 2 visível,
+    -- grande e vertical, e todo o conteúdo apagado), do fim pro começo
+    task.spawn(function()
+        local line1Scale = Lines[1]:FindFirstChildOfClass("UIScale")
+        local line2Scale = Lines[2]:FindFirstChildOfClass("UIScale")
+        local line3Scale = Lines[3]:FindFirstChildOfClass("UIScale")
+
+        -- Passo reverso 1: a linha do meio "nasce" no centro
+        tween(line2Scale, {Scale = BIG_LINE_SCALE}, 0.15, Enum.EasingStyle.Back)
+        task.wait(0.15)
+
+        -- Passo reverso 2: a GUI se abre ao redor das linhas com um slide,
+        -- as outras 2 linhas reaparecem, a sombra volta
+        tween(Main, {Size = FULL_SIZE}, 0.35, Enum.EasingStyle.Quint)
+        tween(line1Scale, {Scale = BIG_LINE_SCALE}, 0.3)
+        tween(line3Scale, {Scale = BIG_LINE_SCALE}, 0.3)
+        fadeShadowIn(0.35)
+        task.wait(0.35)
+
+        -- Passo reverso 3: as 3 linhas (verticais, grandes) se separam do
+        -- centro de volta pras posições originais
+        tween(Lines[1], {Position = LineDefaults[1].Position}, 0.25)
+        tween(Lines[3], {Position = LineDefaults[3].Position}, 0.25)
+        task.wait(0.25)
+
+        -- Passo reverso 4: as linhas encolhem de volta ao tamanho normal
+        tween(line1Scale, {Scale = 1}, 0.25)
+        tween(line2Scale, {Scale = 1}, 0.25)
+        tween(line3Scale, {Scale = 1}, 0.25)
+        task.wait(0.25)
+
+        -- Passo reverso 5: as linhas giram de volta pra horizontal
+        tween(Lines[1], {Rotation = 0}, 0.2)
+        tween(Lines[2], {Rotation = 0}, 0.2)
+        tween(Lines[3], {Rotation = 0}, 0.2)
+        task.wait(0.2)
+
+        -- Passo reverso 6: todo o conteúdo do painel reaparece
+        fadeInContent(0.25)
+        tween(mainStroke, {Transparency = 0.75}, 0.25)
+        task.wait(0.25)
+
+        -- volta o painel pro esquema normal de âncora central (sem pulo
+        -- visual), pra arrastar/minimizar continuarem funcionando normal
+        local curAbsPos = Main.AbsolutePosition
+        local curAbsSize = Main.AbsoluteSize
+        local centerAbs = curAbsPos + curAbsSize / 2
+        Main.AnchorPoint = Vector2.new(0.5, 0.5)
+        Main.Position = UDim2.new(0, centerAbs.X, 0, centerAbs.Y)
+        ShadowHolder.AnchorPoint = Vector2.new(0.5, 0.5)
+        ShadowHolder.Position = Main.Position
+
+        resetHamburgerLines()
+        HamburgerBtn.Rotation = 0
+        showPage("Speed")
+    end)
 end
 
 local function closeGui()
@@ -1272,40 +1706,57 @@ local function closeGui()
     stopAimTrainer()
 
     task.spawn(function()
-        local step = 0.22
-        local centerY = LineDefaults[2].Position
+        -- Passo 1: toda a GUI (conteúdo) some primeiro
+        fadeOutContent(0.22)
+        tween(mainStroke, {Transparency = 1}, 0.22)
+        task.wait(0.22)
 
-        -- Passo 1: as 3 linhas convergem ao centro enquanto o resto do
-        -- painel desaparece
-        fadeOutContent(step)
-        tween(Lines[1], {Position = centerY}, step)
-        tween(Lines[3], {Position = centerY}, step)
-        task.wait(step)
-
-        -- Passo 2: as 3 linhas giram para a vertical
+        -- Passo 2: as 3 linhas giram pra vertical
         tween(Lines[1], {Rotation = 90}, 0.2)
         tween(Lines[2], {Rotation = 90}, 0.2)
         tween(Lines[3], {Rotation = 90}, 0.2)
         task.wait(0.2)
 
-        -- Passo 3: as linhas de fora se fecham dos dois lados (centro pra fora ao contrário: encolhem pro centro)
+        -- Passo 3: as 3 linhas aumentam bastante de tamanho
         local line1Scale = Lines[1]:FindFirstChildOfClass("UIScale")
-        local line3Scale = Lines[3]:FindFirstChildOfClass("UIScale")
-        tween(line1Scale, {Scale = 0}, 0.22)
-        tween(line3Scale, {Scale = 0}, 0.22)
-        task.wait(0.22)
-
-        -- Passo 4: a linha do meio volta pra horizontal e se fecha também dos dois lados
-        tween(Lines[2], {Rotation = 0}, 0.18)
-        task.wait(0.18)
         local line2Scale = Lines[2]:FindFirstChildOfClass("UIScale")
-        tween(line2Scale, {Scale = 0}, 0.22)
-        task.wait(0.22)
+        local line3Scale = Lines[3]:FindFirstChildOfClass("UIScale")
+        tween(line1Scale, {Scale = BIG_LINE_SCALE}, 0.25)
+        tween(line2Scale, {Scale = BIG_LINE_SCALE}, 0.25)
+        tween(line3Scale, {Scale = BIG_LINE_SCALE}, 0.25)
+        task.wait(0.25)
+
+        -- Passo 4: as 3 linhas convergem pro centro
+        local centerPos = LineDefaults[2].Position
+        tween(Lines[1], {Position = centerPos}, 0.25)
+        tween(Lines[3], {Position = centerPos}, 0.25)
+        task.wait(0.25)
+
+        -- Passo 5: a GUI se fecha ao redor das linhas com um slide,
+        -- sobrando só a linha do meio
+        local anchorFrac, iconAbsPos = computeIconAnchor()
+        Main.AnchorPoint = anchorFrac
+        Main.Position = UDim2.new(0, iconAbsPos.X, 0, iconAbsPos.Y)
+        ShadowHolder.AnchorPoint = anchorFrac
+        ShadowHolder.Position = Main.Position
+
+        tween(Main, {Size = UDim2.new(0, 0, 0, 0)}, 0.35, Enum.EasingStyle.Quint)
+        fadeShadowOut(0.3)
+        tween(line1Scale, {Scale = 0}, 0.3)
+        tween(line3Scale, {Scale = 0}, 0.3)
+        task.wait(0.35)
+
+        -- Passo 6: a última linha vai ao centro e a GUI fecha de vez
+        tween(line2Scale, {Scale = 0}, 0.15)
+        task.wait(0.15)
 
         Main.Visible = false
         ShadowHolder.Visible = false
+        hasClosedBefore = true
     end)
 end
+
+captureDefaults()
 
 CloseBtn.MouseButton1Click:Connect(closeGui)
 
@@ -1348,6 +1799,134 @@ LocalPlayer.CharacterAdded:Connect(function(char)
         task.wait(0.2)
         setInvisible(true)
     end
+end)
+
+------------------------------------------------------------
+-- NOTIFICAÇÃO: JOGADOR ENTROU NO SERVIDOR (fora da GUI principal)
+------------------------------------------------------------
+local NotifyGui = Instance.new("ScreenGui")
+NotifyGui.Name = "SpeedHubNotifications"
+NotifyGui.ResetOnSpawn = false
+NotifyGui.IgnoreGuiInset = true
+NotifyGui.DisplayOrder = 40
+NotifyGui.Parent = PlayerGui
+
+local JoinToastHolder = Instance.new("Frame")
+JoinToastHolder.Name = "JoinToastHolder"
+JoinToastHolder.AnchorPoint = Vector2.new(1, 1)
+JoinToastHolder.Position = UDim2.new(1, -16, 1, -16)
+JoinToastHolder.Size = UDim2.new(0, 240, 0, 300)
+JoinToastHolder.BackgroundTransparency = 1
+JoinToastHolder.Parent = NotifyGui
+
+local joinListLayout = Instance.new("UIListLayout")
+joinListLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+joinListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+joinListLayout.Padding = UDim.new(0, 6)
+joinListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+joinListLayout.Parent = JoinToastHolder
+
+local function showJoinToast(username)
+    local toast = Instance.new("Frame")
+    toast.Size = UDim2.new(0, 220, 0, 40)
+    toast.BackgroundColor3 = Color3.fromRGB(38, 38, 40)
+    toast.BackgroundTransparency = 0.15
+    toast.BorderSizePixel = 0
+    toast.Parent = JoinToastHolder
+    round(toast, 10)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255,255,255)
+    stroke.Transparency = 0.8
+    stroke.Parent = toast
+
+    local scale = Instance.new("UIScale")
+    scale.Scale = 0
+    scale.Parent = toast
+
+    newLabel(toast, username.." joined", UDim2.new(1, -20, 1, 0), UDim2.new(0, 10, 0, 0), 14, true)
+
+    tween(scale, {Scale = 1}, 0.25, Enum.EasingStyle.Back)
+
+    task.delay(3.5, function()
+        local fadeStroke = tween(stroke, {Transparency = 1}, 0.3)
+        tween(scale, {Scale = 0}, 0.3, Enum.EasingStyle.Quad)
+        task.delay(0.3, function()
+            toast:Destroy()
+        end)
+    end)
+end
+
+Players.PlayerAdded:Connect(function(plr)
+    if plr ~= LocalPlayer then
+        showJoinToast(plr.Name)
+    end
+end)
+
+------------------------------------------------------------
+-- PAINEL DE INFO DO SERVIDOR (region / ping / tps) — some sozinho
+-- após 5 segundos, some da tela do jogo (fora da GUI principal)
+------------------------------------------------------------
+local ServerInfoPanel = Instance.new("Frame")
+ServerInfoPanel.Name = "ServerInfoPanel"
+ServerInfoPanel.AnchorPoint = Vector2.new(0.5, 0)
+ServerInfoPanel.Position = UDim2.new(0.5, 0, 0, 16)
+ServerInfoPanel.Size = UDim2.new(0, 260, 0, 34)
+ServerInfoPanel.BackgroundColor3 = Color3.fromRGB(38, 38, 40)
+ServerInfoPanel.BackgroundTransparency = 0.15
+ServerInfoPanel.BorderSizePixel = 0
+ServerInfoPanel.Parent = NotifyGui
+round(ServerInfoPanel, 10)
+local serverInfoStroke = Instance.new("UIStroke")
+serverInfoStroke.Color = Color3.fromRGB(255,255,255)
+serverInfoStroke.Transparency = 0.8
+serverInfoStroke.Parent = ServerInfoPanel
+
+local serverInfoScale = Instance.new("UIScale")
+serverInfoScale.Scale = 0
+serverInfoScale.Parent = ServerInfoPanel
+
+local ServerInfoLabel = newLabel(ServerInfoPanel, "Loading server info...", UDim2.new(1, -20, 1, 0), UDim2.new(0, 10, 0, 0), 13, true, Enum.TextXAlignment.Center)
+
+task.spawn(function()
+    tween(serverInfoScale, {Scale = 1}, 0.25, Enum.EasingStyle.Back)
+
+    -- Ping (oficial, via Players:GetNetworkPing())
+    local pingMs = "--"
+    local okPing, pingResult = pcall(function()
+        return LocalPlayer:GetNetworkPing()
+    end)
+    if okPing and pingResult then
+        pingMs = math.floor(pingResult * 1000)
+    end
+
+    -- Região aproximada: o Roblox não expõe a localização física do servidor
+    -- pra LocalScripts, então usamos a região detectada do jogador como estimativa
+    local region = "--"
+    local okRegion, regionResult = pcall(function()
+        return game:GetService("LocalizationService"):GetCountryRegionForPlayerAsync(LocalPlayer)
+    end)
+    if okRegion and regionResult then
+        region = regionResult
+    end
+
+    -- TPS estimado: medimos a frequência do Heartbeat por 1 segundo.
+    -- Não é o TPS real do servidor (isso exigiria um script no servidor
+    -- reportando via RemoteEvent), é uma estimativa client-side.
+    local tpsCount = 0
+    local tpsConn
+    tpsConn = RunService.Heartbeat:Connect(function()
+        tpsCount += 1
+    end)
+    task.wait(1)
+    tpsConn:Disconnect()
+
+    ServerInfoLabel.Text = string.format("Region: %s   Ping: %sms   TPS: ~%d", region, tostring(pingMs), tpsCount)
+
+    task.wait(5)
+    tween(serverInfoStroke, {Transparency = 1}, 0.3)
+    tween(serverInfoScale, {Scale = 0}, 0.3, Enum.EasingStyle.Quad)
+    task.wait(0.3)
+    ServerInfoPanel:Destroy()
 end)
 
 ------------------------------------------------------------

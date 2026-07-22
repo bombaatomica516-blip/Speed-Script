@@ -1,58 +1,68 @@
 --[[
-    NOCLIP SCRIPT - LocalScript
+    SCRIPT COMPLETO - LocalScript
     -----------------------------------
     Coloque este script dentro de StarterPlayer > StarterPlayerScripts
-    (tem que ser um LocalScript, pois mexe com o cliente/personagem local)
+    (precisa ser um LocalScript)
 
-    Funcionamento:
-    - Aperte "R" para ativar o noclip (o personagem desce através do chão)
-    - Enquanto está caindo/descendo, o script ignora o primeiro chão (o que você já estava em cima)
-    - Assim que detectar um NOVO chão abaixo, desativa o noclip automaticamente
-    - Aperte "R" de novo a qualquer momento para cancelar manualmente
-    - Notificações aparecem quando liga e quando desliga
+    Contém:
+    1) Sistema de Noclip (tecla R) com detecção automática de novo chão
+    2) Som de notificação tocado assim que o script é executado
+    3) GUI de Music Player moderna, com playlist deslizante
 ]]
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
+local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 
--- ==========================
--- CONFIGURAÇÕES
--- ==========================
-local TOGGLE_KEY = Enum.KeyCode.R
-local DESCENT_SPEED = 25          -- velocidade de descida (studs/segundo)
-local RAY_DISTANCE = 4            -- distância do raycast pra detectar chão
-local MIN_AIR_DISTANCE = 6        -- distância mínima que precisa "sumir" do chão original antes de detectar um novo
+-- ============================================================
+-- SOM DE "SCRIPT EXECUTADO" (toca assim que o script carrega)
+-- ============================================================
+do
+    local loadSound = Instance.new("Sound")
+    loadSound.SoundId = "rbxassetid://9046978089" -- troque por um ID de som de sua preferência
+    loadSound.Volume = 0.6
+    loadSound.Parent = SoundService
+    loadSound:Play()
+    Debris:AddItem(loadSound, 5)
+end
 
--- ==========================
--- ESTADO INTERNO
--- ==========================
+-- ============================================================
+-- CONFIGURAÇÕES DO NOCLIP
+-- ============================================================
+local TOGGLE_KEY = Enum.KeyCode.R
+local DESCENT_SPEED = 25
+local RAY_DISTANCE = 4
+
+-- ============================================================
+-- ESTADO DO NOCLIP
+-- ============================================================
 local noclipping = false
 local heartbeatConnection = nil
 local hasLeftOriginalFloor = false
 
--- ==========================
--- FUNÇÃO DE NOTIFICAÇÃO
--- ==========================
+-- ============================================================
+-- NOTIFICAÇÃO DE TEXTO (sistema nativo do Roblox)
+-- ============================================================
 local function notify(title, text)
-    local ok, err = pcall(function()
+    pcall(function()
         StarterGui:SetCore("SendNotification", {
             Title = title,
             Text = text,
             Duration = 3,
         })
     end)
-    if not ok then
-        warn("Não foi possível enviar notificação:", err)
-    end
 end
 
--- ==========================
--- FUNÇÕES AUXILIARES
--- ==========================
+-- ============================================================
+-- FUNÇÕES DO NOCLIP
+-- ============================================================
 local function setCollision(character, canCollide)
     for _, part in ipairs(character:GetDescendants()) do
         if part:IsA("BasePart") then
@@ -108,21 +118,17 @@ local function startNoclip()
             return
         end
 
-        -- desce o personagem
         hrp.CFrame = hrp.CFrame + Vector3.new(0, -DESCENT_SPEED * dt, 0)
 
-        -- raycast pra baixo pra detectar chão
         local origin = hrp.Position
         local direction = Vector3.new(0, -RAY_DISTANCE, 0)
         local result = workspace:Raycast(origin, direction, raycastParams)
 
         if not hasLeftOriginalFloor then
-            -- ainda não saiu do chão original: espera não detectar nada por um tempo
             if not result then
                 hasLeftOriginalFloor = true
             end
         else
-            -- já saiu do chão original: se detectar algo, é um NOVO chão
             if result then
                 stopNoclip(true)
             end
@@ -130,11 +136,8 @@ local function startNoclip()
     end)
 end
 
--- ==========================
--- INPUT (tecla R)
--- ==========================
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-    if gameProcessedEvent then return end -- ignora se estiver digitando no chat, etc.
+    if gameProcessedEvent then return end
     if input.KeyCode ~= TOGGLE_KEY then return end
 
     if noclipping then
@@ -144,11 +147,426 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
     end
 end)
 
--- ==========================
--- SEGURANÇA: se o personagem morrer/respawnar, desliga o noclip
--- ==========================
 player.CharacterAdded:Connect(function()
     if noclipping then
         stopNoclip(false)
+    end
+end)
+
+-- ============================================================
+-- ============================================================
+--                    MUSIC PLAYER (GUI)
+--        (sem relação com o noclip, apenas parte do mesmo script)
+-- ============================================================
+-- ============================================================
+
+-- ---- Paleta de cores ----
+local COLOR_BG          = Color3.fromRGB(22, 22, 26)
+local COLOR_PANEL       = Color3.fromRGB(30, 30, 36)
+local COLOR_ACCENT      = Color3.fromRGB(114, 137, 255)
+local COLOR_PLAY        = Color3.fromRGB(87, 201, 124)
+local COLOR_STOP        = Color3.fromRGB(230, 80, 80)
+local COLOR_TEXT        = Color3.fromRGB(235, 235, 240)
+local COLOR_SUBTEXT     = Color3.fromRGB(160, 160, 170)
+local COLOR_STROKE      = Color3.fromRGB(55, 55, 65)
+
+-- ---- Utilitário para criar cantos arredondados ----
+local function corner(radius, parent)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius)
+    c.Parent = parent
+    return c
+end
+
+local function stroke(color, thickness, parent)
+    local s = Instance.new("UIStroke")
+    s.Color = color
+    s.Thickness = thickness
+    s.Parent = parent
+    return s
+end
+
+-- ============================================================
+-- ESTADO DO PLAYER DE MÚSICA
+-- ============================================================
+local currentSound = nil
+local currentSongId = nil
+local playlist = {} -- { {id="123", name="..."}, ... }
+local playlistOpen = false
+
+-- ============================================================
+-- CONSTRUÇÃO DA GUI
+-- ============================================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MusicPlayerGui"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- ---- Frame principal ----
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 300, 0, 250)
+mainFrame.Position = UDim2.new(0, 30, 0.5, -125)
+mainFrame.BackgroundColor3 = COLOR_BG
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+corner(16, mainFrame)
+stroke(COLOR_STROKE, 1, mainFrame)
+
+-- ---- Título ----
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -20, 0, 34)
+titleLabel.Position = UDim2.new(0, 10, 0, 10)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Text = "🎵  Music Player"
+titleLabel.TextSize = 18
+titleLabel.TextColor3 = COLOR_TEXT
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = mainFrame
+
+-- ---- Label "tocando agora" ----
+local nowPlayingLabel = Instance.new("TextLabel")
+nowPlayingLabel.Size = UDim2.new(1, -20, 0, 18)
+nowPlayingLabel.Position = UDim2.new(0, 10, 0, 42)
+nowPlayingLabel.BackgroundTransparency = 1
+nowPlayingLabel.Font = Enum.Font.Gotham
+nowPlayingLabel.Text = "Nada tocando"
+nowPlayingLabel.TextSize = 13
+nowPlayingLabel.TextColor3 = COLOR_SUBTEXT
+nowPlayingLabel.TextXAlignment = Enum.TextXAlignment.Left
+nowPlayingLabel.TextTruncate = Enum.TextTruncate.AtEnd
+nowPlayingLabel.Parent = mainFrame
+
+-- ---- Caixa de ID ----
+local idBox = Instance.new("TextBox")
+idBox.Size = UDim2.new(1, -70, 0, 36)
+idBox.Position = UDim2.new(0, 10, 0, 68)
+idBox.BackgroundColor3 = COLOR_PANEL
+idBox.Font = Enum.Font.Gotham
+idBox.PlaceholderText = "Insira o ID da música..."
+idBox.PlaceholderColor3 = COLOR_SUBTEXT
+idBox.Text = ""
+idBox.TextSize = 14
+idBox.TextColor3 = COLOR_TEXT
+idBox.ClearTextOnFocus = false
+idBox.Parent = mainFrame
+corner(8, idBox)
+stroke(COLOR_STROKE, 1, idBox)
+
+-- espaçamento interno do texto
+local idBoxPadding = Instance.new("UIPadding")
+idBoxPadding.PaddingLeft = UDim.new(0, 10)
+idBoxPadding.Parent = idBox
+
+-- ---- Botão de adicionar à playlist (+) ----
+local addButton = Instance.new("TextButton")
+addButton.Size = UDim2.new(0, 50, 0, 36)
+addButton.Position = UDim2.new(1, -60, 0, 68)
+addButton.BackgroundColor3 = COLOR_ACCENT
+addButton.Font = Enum.Font.GothamBold
+addButton.Text = "+"
+addButton.TextSize = 20
+addButton.TextColor3 = Color3.new(1, 1, 1)
+addButton.Parent = mainFrame
+corner(8, addButton)
+
+-- ---- Botões Play / Stop ----
+local playButton = Instance.new("TextButton")
+playButton.Size = UDim2.new(0.5, -15, 0, 40)
+playButton.Position = UDim2.new(0, 10, 0, 114)
+playButton.BackgroundColor3 = COLOR_PLAY
+playButton.Font = Enum.Font.GothamBold
+playButton.Text = "▶  Play"
+playButton.TextSize = 15
+playButton.TextColor3 = Color3.new(1, 1, 1)
+playButton.Parent = mainFrame
+corner(10, playButton)
+
+local stopButton = Instance.new("TextButton")
+stopButton.Size = UDim2.new(0.5, -15, 0, 40)
+stopButton.Position = UDim2.new(0.5, 5, 0, 114)
+stopButton.BackgroundColor3 = COLOR_STOP
+stopButton.Font = Enum.Font.GothamBold
+stopButton.Text = "■  Stop"
+stopButton.TextSize = 15
+stopButton.TextColor3 = Color3.new(1, 1, 1)
+stopButton.Parent = mainFrame
+corner(10, stopButton)
+
+-- ---- Botões Voltar / Avançar (logo abaixo de Play/Stop) ----
+local backButton = Instance.new("TextButton")
+backButton.Size = UDim2.new(0.5, -15, 0, 34)
+backButton.Position = UDim2.new(0, 10, 0, 162)
+backButton.BackgroundColor3 = COLOR_PANEL
+backButton.Font = Enum.Font.GothamBold
+backButton.Text = "◀  Voltar"
+backButton.TextSize = 13
+backButton.TextColor3 = COLOR_TEXT
+backButton.Parent = mainFrame
+corner(10, backButton)
+stroke(COLOR_STROKE, 1, backButton)
+
+local nextButton = Instance.new("TextButton")
+nextButton.Size = UDim2.new(0.5, -15, 0, 34)
+nextButton.Position = UDim2.new(0.5, 5, 0, 162)
+nextButton.BackgroundColor3 = COLOR_PANEL
+nextButton.Font = Enum.Font.GothamBold
+nextButton.Text = "Avançar  ▶"
+nextButton.TextSize = 13
+nextButton.TextColor3 = COLOR_TEXT
+nextButton.Parent = mainFrame
+corner(10, nextButton)
+stroke(COLOR_STROKE, 1, nextButton)
+
+-- ---- Rodapé ----
+local footerLabel = Instance.new("TextLabel")
+footerLabel.Size = UDim2.new(1, -20, 0, 16)
+footerLabel.Position = UDim2.new(0, 10, 1, -26)
+footerLabel.BackgroundTransparency = 1
+footerLabel.Font = Enum.Font.Gotham
+footerLabel.Text = "Clique em < para abrir a playlist"
+footerLabel.TextSize = 11
+footerLabel.TextColor3 = COLOR_SUBTEXT
+footerLabel.TextXAlignment = Enum.TextXAlignment.Left
+footerLabel.Parent = mainFrame
+
+-- ============================================================
+-- PLAYLIST (painel deslizante)
+-- ============================================================
+
+-- Botão "<" no meio direito do frame principal, que abre/fecha a playlist
+local toggleButton = Instance.new("TextButton")
+toggleButton.Name = "ToggleButton"
+toggleButton.Size = UDim2.new(0, 22, 0, 46)
+toggleButton.AnchorPoint = Vector2.new(0, 0.5)
+toggleButton.Position = UDim2.new(1, -4, 0.5, 0)
+toggleButton.BackgroundColor3 = COLOR_ACCENT
+toggleButton.Font = Enum.Font.GothamBold
+toggleButton.Text = "❮"
+toggleButton.TextSize = 16
+toggleButton.TextColor3 = Color3.new(1, 1, 1)
+toggleButton.ZIndex = 3
+toggleButton.Parent = mainFrame
+corner(8, toggleButton)
+
+-- Container que faz o "clip" da animação de slide
+local playlistContainer = Instance.new("Frame")
+playlistContainer.Name = "PlaylistContainer"
+playlistContainer.AnchorPoint = Vector2.new(0, 0.5)
+playlistContainer.Position = UDim2.new(1, 8, 0.5, 0)
+playlistContainer.Size = UDim2.new(0, 0, 1, 0) -- começa fechado (largura 0)
+playlistContainer.BackgroundTransparency = 1
+playlistContainer.ClipsDescendants = true
+playlistContainer.ZIndex = 2
+playlistContainer.Parent = mainFrame
+
+-- Frame visual da playlist (largura fixa, fica "dentro" do container)
+local playlistFrame = Instance.new("Frame")
+playlistFrame.Name = "PlaylistFrame"
+playlistFrame.Size = UDim2.new(0, 190, 1, 0)
+playlistFrame.Position = UDim2.new(0, 0, 0, 0)
+playlistFrame.BackgroundColor3 = COLOR_BG
+playlistFrame.BorderSizePixel = 0
+playlistFrame.Parent = playlistContainer
+corner(16, playlistFrame)
+stroke(COLOR_STROKE, 1, playlistFrame)
+
+local playlistTitle = Instance.new("TextLabel")
+playlistTitle.Size = UDim2.new(1, -20, 0, 30)
+playlistTitle.Position = UDim2.new(0, 10, 0, 8)
+playlistTitle.BackgroundTransparency = 1
+playlistTitle.Font = Enum.Font.GothamBold
+playlistTitle.Text = "Playlist"
+playlistTitle.TextSize = 16
+playlistTitle.TextColor3 = COLOR_TEXT
+playlistTitle.TextXAlignment = Enum.TextXAlignment.Left
+playlistTitle.Parent = playlistFrame
+
+-- Área rolável com as músicas adicionadas
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(1, -16, 1, -50)
+scrollFrame.Position = UDim2.new(0, 8, 0, 40)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.BorderSizePixel = 0
+scrollFrame.ScrollBarThickness = 4
+scrollFrame.ScrollBarImageColor3 = COLOR_ACCENT
+scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollFrame.Parent = playlistFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 6)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Parent = scrollFrame
+
+-- ============================================================
+-- LÓGICA DO PLAYER
+-- ============================================================
+
+local function getSongName(id)
+    local ok, info = pcall(function()
+        return MarketplaceService:GetProductInfo(tonumber(id), Enum.InfoType.Asset)
+    end)
+    if ok and info and info.Name then
+        return info.Name
+    end
+    return "Música " .. tostring(id)
+end
+
+local function playSong(id)
+    if not id or id == "" then return end
+
+    if currentSound then
+        currentSound:Stop()
+        currentSound:Destroy()
+    end
+
+    local sound = Instance.new("Sound")
+    sound.Name = "MusicPlayerSound"
+    sound.SoundId = "rbxassetid://" .. id
+    sound.Volume = 0.5
+    sound.Parent = SoundService
+    sound:Play()
+
+    currentSound = sound
+    currentSongId = id
+    idBox.Text = id
+    nowPlayingLabel.Text = "Tocando: " .. getSongName(id)
+end
+
+local function stopSong()
+    if currentSound then
+        currentSound:Stop()
+    end
+    nowPlayingLabel.Text = "Nada tocando"
+end
+
+local function findCurrentIndex()
+    for i, song in ipairs(playlist) do
+        if song.id == currentSongId then
+            return i
+        end
+    end
+    return 0
+end
+
+-- Recria visualmente as entradas da playlist
+local function renderPlaylist()
+    for _, child in ipairs(scrollFrame:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+
+    for i, song in ipairs(playlist) do
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 34)
+        row.BackgroundColor3 = COLOR_PANEL
+        row.BorderSizePixel = 0
+        row.LayoutOrder = i
+        row.Parent = scrollFrame
+        corner(8, row)
+
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Size = UDim2.new(1, -60, 1, 0)
+        nameLabel.Position = UDim2.new(0, 8, 0, 0)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Font = Enum.Font.Gotham
+        nameLabel.Text = song.name or ("Música " .. song.id)
+        nameLabel.TextSize = 12
+        nameLabel.TextColor3 = COLOR_TEXT
+        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+        nameLabel.Parent = row
+
+        local rowPlayBtn = Instance.new("TextButton")
+        rowPlayBtn.Size = UDim2.new(0, 24, 0, 24)
+        rowPlayBtn.Position = UDim2.new(1, -54, 0.5, -12)
+        rowPlayBtn.BackgroundColor3 = COLOR_PLAY
+        rowPlayBtn.Font = Enum.Font.GothamBold
+        rowPlayBtn.Text = "▶"
+        rowPlayBtn.TextSize = 12
+        rowPlayBtn.TextColor3 = Color3.new(1, 1, 1)
+        rowPlayBtn.Parent = row
+        corner(6, rowPlayBtn)
+
+        local rowRemoveBtn = Instance.new("TextButton")
+        rowRemoveBtn.Size = UDim2.new(0, 24, 0, 24)
+        rowRemoveBtn.Position = UDim2.new(1, -26, 0.5, -12)
+        rowRemoveBtn.BackgroundColor3 = COLOR_STOP
+        rowRemoveBtn.Font = Enum.Font.GothamBold
+        rowRemoveBtn.Text = "✕"
+        rowRemoveBtn.TextSize = 12
+        rowRemoveBtn.TextColor3 = Color3.new(1, 1, 1)
+        rowRemoveBtn.Parent = row
+        corner(6, rowRemoveBtn)
+
+        rowPlayBtn.MouseButton1Click:Connect(function()
+            playSong(song.id)
+        end)
+
+        rowRemoveBtn.MouseButton1Click:Connect(function()
+            table.remove(playlist, i)
+            renderPlaylist()
+        end)
+    end
+end
+
+-- ---- Conexões dos botões principais ----
+playButton.MouseButton1Click:Connect(function()
+    local id = idBox.Text:match("%d+")
+    playSong(id)
+end)
+
+stopButton.MouseButton1Click:Connect(function()
+    stopSong()
+end)
+
+addButton.MouseButton1Click:Connect(function()
+    local id = idBox.Text:match("%d+")
+    if id then
+        table.insert(playlist, {id = id, name = getSongName(id)})
+        renderPlaylist()
+    end
+end)
+
+backButton.MouseButton1Click:Connect(function()
+    if #playlist == 0 then return end
+    local idx = findCurrentIndex()
+    idx = idx - 1
+    if idx < 1 then idx = #playlist end
+    playSong(playlist[idx].id)
+end)
+
+nextButton.MouseButton1Click:Connect(function()
+    if #playlist == 0 then return end
+    local idx = findCurrentIndex()
+    idx = idx + 1
+    if idx > #playlist then idx = 1 end
+    playSong(playlist[idx].id)
+end)
+
+-- ---- Animação de abrir/fechar a playlist ----
+toggleButton.MouseButton1Click:Connect(function()
+    playlistOpen = not playlistOpen
+
+    local targetWidth = playlistOpen and 190 or 0
+    local tween = TweenService:Create(
+        playlistContainer,
+        TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {Size = UDim2.new(0, targetWidth, 1, 0)}
+    )
+    tween:Play()
+
+    toggleButton.Text = playlistOpen and "❯" or "❮"
+end)
+
+-- Permite tocar a música apertando Enter na caixa de texto
+idBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        local id = idBox.Text:match("%d+")
+        playSong(id)
     end
 end)

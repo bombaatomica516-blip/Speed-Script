@@ -1,0 +1,154 @@
+--[[
+    NOCLIP SCRIPT - LocalScript
+    -----------------------------------
+    Coloque este script dentro de StarterPlayer > StarterPlayerScripts
+    (tem que ser um LocalScript, pois mexe com o cliente/personagem local)
+
+    Funcionamento:
+    - Aperte "R" para ativar o noclip (o personagem desce através do chão)
+    - Enquanto está caindo/descendo, o script ignora o primeiro chão (o que você já estava em cima)
+    - Assim que detectar um NOVO chão abaixo, desativa o noclip automaticamente
+    - Aperte "R" de novo a qualquer momento para cancelar manualmente
+    - Notificações aparecem quando liga e quando desliga
+]]
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+
+-- ==========================
+-- CONFIGURAÇÕES
+-- ==========================
+local TOGGLE_KEY = Enum.KeyCode.R
+local DESCENT_SPEED = 25          -- velocidade de descida (studs/segundo)
+local RAY_DISTANCE = 4            -- distância do raycast pra detectar chão
+local MIN_AIR_DISTANCE = 6        -- distância mínima que precisa "sumir" do chão original antes de detectar um novo
+
+-- ==========================
+-- ESTADO INTERNO
+-- ==========================
+local noclipping = false
+local heartbeatConnection = nil
+local hasLeftOriginalFloor = false
+
+-- ==========================
+-- FUNÇÃO DE NOTIFICAÇÃO
+-- ==========================
+local function notify(title, text)
+    local ok, err = pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = 3,
+        })
+    end)
+    if not ok then
+        warn("Não foi possível enviar notificação:", err)
+    end
+end
+
+-- ==========================
+-- FUNÇÕES AUXILIARES
+-- ==========================
+local function setCollision(character, canCollide)
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = canCollide
+        end
+    end
+end
+
+local function stopNoclip(auto)
+    if not noclipping then return end
+    noclipping = false
+
+    if heartbeatConnection then
+        heartbeatConnection:Disconnect()
+        heartbeatConnection = nil
+    end
+
+    local character = player.Character
+    if character then
+        setCollision(character, true)
+    end
+
+    if auto then
+        notify("Noclip", "Desativado automaticamente (novo chão detectado)")
+    else
+        notify("Noclip", "Desativado")
+    end
+end
+
+local function startNoclip()
+    local character = player.Character
+    if not character then return end
+
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
+
+    noclipping = true
+    hasLeftOriginalFloor = false
+
+    setCollision(character, false)
+    notify("Noclip", "Ativado")
+
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {character}
+
+    heartbeatConnection = RunService.Heartbeat:Connect(function(dt)
+        if not noclipping then return end
+
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            stopNoclip(false)
+            return
+        end
+
+        -- desce o personagem
+        hrp.CFrame = hrp.CFrame + Vector3.new(0, -DESCENT_SPEED * dt, 0)
+
+        -- raycast pra baixo pra detectar chão
+        local origin = hrp.Position
+        local direction = Vector3.new(0, -RAY_DISTANCE, 0)
+        local result = workspace:Raycast(origin, direction, raycastParams)
+
+        if not hasLeftOriginalFloor then
+            -- ainda não saiu do chão original: espera não detectar nada por um tempo
+            if not result then
+                hasLeftOriginalFloor = true
+            end
+        else
+            -- já saiu do chão original: se detectar algo, é um NOVO chão
+            if result then
+                stopNoclip(true)
+            end
+        end
+    end)
+end
+
+-- ==========================
+-- INPUT (tecla R)
+-- ==========================
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if gameProcessedEvent then return end -- ignora se estiver digitando no chat, etc.
+    if input.KeyCode ~= TOGGLE_KEY then return end
+
+    if noclipping then
+        stopNoclip(false)
+    else
+        startNoclip()
+    end
+end)
+
+-- ==========================
+-- SEGURANÇA: se o personagem morrer/respawnar, desliga o noclip
+-- ==========================
+player.CharacterAdded:Connect(function()
+    if noclipping then
+        stopNoclip(false)
+    end
+end)

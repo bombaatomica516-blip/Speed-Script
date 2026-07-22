@@ -18,8 +18,13 @@ local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local Debris = game:GetService("Debris")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
+
+-- RemoteEvent criado pelo script de servidor (MusicPlayerServer.lua)
+-- É ele quem manda o servidor tocar/parar a música pra todo mundo ao redor
+local musicRemote = ReplicatedStorage:WaitForChild("MusicPlayerEvent")
 
 -- ============================================================
 -- SOM DE "SCRIPT EXECUTADO" (toca assim que o script carrega)
@@ -189,7 +194,6 @@ end
 -- ============================================================
 -- ESTADO DO PLAYER DE MÚSICA
 -- ============================================================
-local currentSound = nil
 local currentSongId = nil
 local playlist = {} -- { {id="123", name="..."}, ... }
 local playlistOpen = false
@@ -418,28 +422,17 @@ end
 local function playSong(id)
     if not id or id == "" then return end
 
-    if currentSound then
-        currentSound:Stop()
-        currentSound:Destroy()
-    end
+    -- Pede ao servidor pra criar o som no seu personagem.
+    -- Assim, qualquer jogador perto de você também vai ouvir.
+    musicRemote:FireServer("Play", id)
 
-    local sound = Instance.new("Sound")
-    sound.Name = "MusicPlayerSound"
-    sound.SoundId = "rbxassetid://" .. id
-    sound.Volume = 0.5
-    sound.Parent = SoundService
-    sound:Play()
-
-    currentSound = sound
     currentSongId = id
     idBox.Text = id
     nowPlayingLabel.Text = "Tocando: " .. getSongName(id)
 end
 
 local function stopSong()
-    if currentSound then
-        currentSound:Stop()
-    end
+    musicRemote:FireServer("Stop")
     nowPlayingLabel.Text = "Nada tocando"
 end
 

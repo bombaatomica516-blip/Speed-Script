@@ -1,0 +1,109 @@
+--[[
+    MUSIC PLAYER - SERVER SCRIPT
+    -----------------------------------
+    Coloque este script dentro de ServerScriptService
+    (precisa ser um Script normal, NÃO um LocalScript)
+
+    Ele recebe os pedidos de "Play"/"Stop" do cliente (NoclipScript.lua)
+    e cria o Sound de verdade no personagem do jogador, no servidor.
+    Como o som existe no servidor e fica dentro do personagem,
+    ele replica para todos os jogadores próximos automaticamente
+    (áudio espacial / 3D, com distância de alcance configurável).
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+-- ==========================
+-- CONFIGURAÇÕES DE ALCANCE DO SOM
+-- ==========================
+local VOLUME = 0.5
+local ROLL_OFF_MIN_DISTANCE = 8   -- distância onde o som começa a diminuir
+local ROLL_OFF_MAX_DISTANCE = 60  -- distância máxima em que ainda dá pra ouvir
+
+-- ==========================
+-- REMOTE EVENT
+-- ==========================
+local remote = Instance.new("RemoteEvent")
+remote.Name = "MusicPlayerEvent"
+remote.Parent = ReplicatedStorage
+
+-- Guarda o som atual de cada jogador
+local activeSounds = {} -- [player] = Sound
+
+local function getRootPart(player)
+    local character = player.Character
+    if not character then return nil end
+    return character:FindFirstChild("HumanoidRootPart")
+end
+
+local function stopSound(player)
+    local sound = activeSounds[player]
+    if sound then
+        pcall(function()
+            sound:Stop()
+            sound:Destroy()
+        end)
+        activeSounds[player] = nil
+    end
+end
+
+local function playSound(player, rawId)
+    if typeof(rawId) ~= "string" then return end
+
+    local id = rawId:match("%d+")
+    if not id then return end
+
+    stopSound(player)
+
+    local rootPart = getRootPart(player)
+    if not rootPart then return end
+
+    local sound = Instance.new("Sound")
+    sound.Name = "MusicPlayerSound_" .. player.Name
+    sound.SoundId = "rbxassetid://" .. id
+    sound.Volume = VOLUME
+    sound.RollOffMode = Enum.RollOffMode.InverseTapered
+    sound.RollOffMinDistance = ROLL_OFF_MIN_DISTANCE
+    sound.RollOffMaxDistance = ROLL_OFF_MAX_DISTANCE
+    sound.Looped = false
+    sound.Parent = rootPart
+
+    sound:Play()
+
+    activeSounds[player] = sound
+
+    -- limpa a referência quando a música termina sozinha
+    sound.Ended:Connect(function()
+        if activeSounds[player] == sound then
+            activeSounds[player] = nil
+        end
+    end)
+end
+
+-- ==========================
+-- RECEBE OS PEDIDOS DO CLIENTE
+-- ==========================
+remote.OnServerEvent:Connect(function(player, action, id)
+    if action == "Play" then
+        playSound(player, id)
+    elseif action == "Stop" then
+        stopSound(player)
+    end
+end)
+
+-- ==========================
+-- LIMPEZA
+-- ==========================
+Players.PlayerRemoving:Connect(function(player)
+    stopSound(player)
+    activeSounds[player] = nil
+end)
+
+-- Se o personagem morrer/respawnar, o Sound (que estava dentro do
+-- HumanoidRootPart antigo) já é destruído junto. Só limpamos a referência.
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        activeSounds[player] = nil
+    end)
+end)
